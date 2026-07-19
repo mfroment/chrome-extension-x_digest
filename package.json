@@ -1,0 +1,8 @@
+{
+  "name": "x-digest",
+  "private": true,
+  "description": "Dev tooling only. The extension ships as plain files; Chrome ignores this.",
+  "scripts": {
+    "test": "node --test"
+  }
+}

@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X Digest</title>
+  <link rel="stylesheet" href="digest.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true"></span>
+      <h1>X Digest</h1>
+      <span class="sep" aria-hidden="true"></span>
+      <select id="account" title="X account"></select>
+      <span class="sep" aria-hidden="true"></span>
+      <span class="stats" id="stats">—</span>
+    </div>
+    <div class="controls center-controls" id="timeline-controls">
+      <span class="search-wrap">
+        <input type="text" id="search" placeholder="Search (text, author)…" />
+        <button id="search-clear" class="search-clear" type="button" hidden aria-label="Clear search" title="Clear search">×</button>
+      </span>
+      <button id="only-unread" class="btn" aria-pressed="false" title="Show only unread posts">Unread only</button>
+      <button id="sort-order" class="btn" title="Toggle reading order">Oldest first</button>
+    </div>
+    <div class="controls center-controls" id="events-controls" hidden>
+      <input type="search" id="event-search" placeholder="Search events…" />
+      <button id="event-unhidden-only" class="btn" aria-pressed="true" title="Show only events you haven't hidden">Unhidden only</button>
+      <button id="event-sort-order" class="btn" title="Toggle event order">Oldest first</button>
+    </div>
+    <div class="controls right-controls">
+      <button id="undo" class="btn" hidden title="Undo the last mark action (Ctrl/⌘+Z)">↶ Undo</button>
+      <button id="analyze" class="btn" title="Classify, summarize and extract events with Claude (right-click: re-analyze all)">✨ Analyze</button>
+      <button id="sync" class="btn" title="Open x.com and auto-scroll the Following feed to fetch new posts, stopping when caught up">🔄 Sync</button>
+      <button id="refresh" class="btn" title="Reload from the database">Refresh</button>
+      <button id="open-settings" class="btn" title="Settings">⚙</button>
+    </div>
+    <div class="controls subbar">
+      <div class="sub-left">
+        <label class="toggle" for="unread-since">Mark unread from</label>
+        <input type="datetime-local" id="unread-since" />
+        <button id="unread-since-btn" class="btn">Apply</button>
+      </div>
+      <nav class="tabs" role="tablist">
+        <button id="tab-timeline" class="tab" role="tab">Timeline</button>
+        <button id="tab-events" class="tab" role="tab">📅 Events</button>
+      </nav>
+      <span id="pipeline-status" class="stats" aria-live="polite"></span>
+    </div>
+  </header>
+
+  <main class="list-wrap">
+    <section id="events" class="events" hidden>
+      <div id="events-list"></div>
+      <p class="events-empty" id="events-empty" hidden>No upcoming events detected yet.
+        Events appear here after ✨ Analyze finds announcements with a future date.</p>
+    </section>
+
+    <div id="list" class="list" aria-live="polite">
+      <div class="empty" id="empty">
+        <p><strong>No posts captured yet.</strong></p>
+        <p>Open <a href="https://x.com/home" target="_blank" rel="noopener">x.com</a> on the
+          "Following" tab and scroll the timeline: posts will appear here as you go.</p>
+      </div>
+    </div>
+  </main>
+
+  <script type="module" src="digest.js"></script>
+</body>
+</html>

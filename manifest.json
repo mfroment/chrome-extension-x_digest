@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "X Digest",
+  "version": "0.10.0",
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAk3MSzB9u/5vXkQ7HBHICHropeE4rfVIJ2RRFlLwiafdvP78rQyjW64fI77QUfdn5jWGWDmGcUB/aya718nf3cHmmnjDNLMKTMOnZxhzfM+6pCney/vKEQ5QB4kvo7RmcODCibKGdgOEDyofJnYSEHUP09hJCU1bYrHU+P1G+jMbn+DQiV02puDbM792BF2IcIPuV3DYnqX/VpuO9dZEGXUIuSKjXk4KDTWzxch1VkOFzMa/VgK8c/N2+inOiOpf5HLeON0Eoz3LVpzX8oKC/JWSNXW3te+3dxscXBgNq02yAv6V09yVoKc2SVs3AU867PGllozNom5C3BiC4NMuBaQIDAQAB",
+  "description": "Captures posts from your X timeline and presents them in a local reading digest with per-account themes, LLM summaries and event extraction.",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "action": {
+    "default_title": "Open X Digest"
+  },
+  "options_ui": {
+    "page": "settings.html",
+    "open_in_tab": true
+  },
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["interceptor.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
+    },
+    {
+      "matches": ["https://x.com/*", "https://twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "permissions": ["storage", "cookies", "tabs"],
+  "host_permissions": ["https://api.anthropic.com/*", "https://x.com/*"]
+}

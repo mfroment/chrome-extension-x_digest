@@ -1,0 +1,683 @@
+/* X Digest — reading tool.
+   Palette: aizome indigo (ink), washi paper, lantern vermilion reserved
+   for the reading line and unread markers. */
+
+:root {
+  --ink: #1b2a4a;        /* deep indigo: text, structural accents */
+  --ink-soft: #5a6784;   /* muted indigo: metadata */
+  --paper: #f7f6f2;      /* page background */
+  --card: #ffffff;       /* post cards */
+  --line: #e3e1d9;       /* hairline rules */
+  --lantern: #d4382e;    /* vermilion: reading line, unread, liked ♥ */
+  --lantern-soft: #fbeae8;
+  --read-dim: 0.62;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Hiragino Kaku Gothic ProN", "Hiragino Sans", "Noto Sans JP", Meiryo, sans-serif;
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+/* ------- top bar ------- */
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--ink);
+  color: #f2f4f8;
+  padding: 10px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 24px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.brand { display: flex; align-items: center; gap: 10px; }
+
+.brand-mark {
+  width: 14px; height: 14px;
+  border-radius: 50%;
+  background: var(--lantern);
+  box-shadow: 0 0 0 3px rgba(212, 56, 46, 0.25);
+}
+
+.topbar h1 {
+  font-size: 17px;
+  font-weight: 700;
+  margin: 0;
+  letter-spacing: 0.02em;
+}
+
+.stats { font-size: 13px; opacity: 0.75; }
+
+/* thin white divider between brand items (title | account | count) */
+.sep { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.35); flex: 0 0 auto; }
+
+.controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.controls[hidden] { display: none; } /* [hidden] alone loses to display:flex above */
+/* search / unread / sort sit centered between the brand and the action buttons */
+.center-controls { flex: 1 1 auto; justify-content: center; }
+
+#account {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #fff;
+  padding: 6px 8px;
+  font-size: 13px;
+}
+#account option { color: var(--ink); background: #fff; }
+
+#search, #event-search {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #fff;
+  padding: 6px 10px;
+  min-width: 240px;
+  font-size: 14px;
+}
+#search::placeholder, #event-search::placeholder { color: rgba(255, 255, 255, 0.55); }
+#search:focus, #event-search:focus { outline: 2px solid var(--lantern); outline-offset: 1px; }
+
+/* custom clear (×) button for the timeline search */
+.search-wrap { position: relative; display: inline-flex; align-items: center; }
+.search-wrap #search { padding-right: 28px; }
+.search-clear {
+  position: absolute;
+  right: 6px;
+  width: 18px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.22);
+  color: #fff;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.search-clear:hover { background: rgba(255, 255, 255, 0.4); }
+
+.toggle {
+  display: flex; align-items: center; gap: 6px;
+  font-size: 13px; cursor: pointer; user-select: none;
+}
+
+.btn {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #f2f4f8;
+  border-radius: 6px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+}
+.btn:hover { background: rgba(255, 255, 255, 0.12); }
+.btn:focus-visible { outline: 2px solid var(--lantern); outline-offset: 1px; }
+.btn.has-pending {
+  background: var(--lantern);
+  border-color: var(--lantern);
+  color: #fff;
+  font-weight: 700;
+}
+.btn.has-pending:hover { background: #b92f26; }
+/* pressed toggle (e.g. Unread only) */
+.btn[aria-pressed="true"] {
+  background: #f2f4f8;
+  border-color: #f2f4f8;
+  color: var(--ink);
+  font-weight: 700;
+}
+.btn[aria-pressed="true"]:hover { background: #fff; }
+
+/* ------- list ------- */
+
+.list {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 16px 80px;
+}
+
+.day-sep {
+  margin: 26px 0 12px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.day-sep::before, .day-sep::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+.day-sep-mid { display: inline-flex; align-items: center; gap: 8px; }
+.day-sep.foldable { cursor: pointer; }
+.day-sep.foldable:hover { color: var(--ink); }
+.day-sep .fold-arrow { font-size: 11px; }
+.day-sep .day-count { font-weight: 400; opacity: 0.7; text-transform: none; }
+
+/* "+ show older read dates" button */
+.more-days {
+  display: block;
+  margin: 10px auto 18px;
+  background: none;
+  border: 1px dashed var(--line);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 6px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.more-days:hover { background: var(--card); color: var(--ink); border-color: var(--ink-soft); }
+
+/* Reading line: the page signature element */
+.reading-line {
+  margin: 20px 0;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--lantern);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.reading-line::before, .reading-line::after {
+  content: "";
+  flex: 1;
+  border-top: 2px solid var(--lantern);
+}
+
+/* ------- post card ------- */
+
+.post {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  position: relative;
+}
+
+/* Unread vs read is shown by opacity + the reading line; the left border now
+   encodes tier (see .tier-* below). */
+.post.read { opacity: var(--read-dim); }
+.post.read:hover, .post.read:focus-within { opacity: 1; }
+
+.post-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.avatar {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  background: var(--line);
+  flex-shrink: 0;
+}
+
+.who { min-width: 0; }
+.who .name { font-weight: 700; font-size: 14px; }
+.who .handle { color: var(--ink-soft); font-size: 13px; margin-left: 6px; }
+.when {
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  white-space: nowrap;
+}
+
+.rt-note {
+  font-size: 12.5px;
+  color: var(--ink-soft);
+  margin-bottom: 4px;
+}
+
+.post-text {
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  font-size: 15px;
+}
+.post-text a { color: #1156a3; text-decoration: none; }
+.post-text a:hover { text-decoration: underline; }
+
+.quoted {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  margin-top: 8px;
+  font-size: 14px;
+  background: var(--paper);
+}
+.quoted .who-inline { font-weight: 600; font-size: 13px; margin-bottom: 2px; color: var(--ink-soft); }
+
+.media {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+.media a { position: relative; display: block; }
+.media img {
+  height: 130px;
+  border-radius: 8px;
+  object-fit: cover;
+  border: 1px solid var(--line);
+  display: block;
+}
+.media .play {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 26px;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.6);
+}
+
+.post-foot {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--ink-soft);
+}
+
+.count.liked { color: var(--lantern); font-weight: 700; }
+
+.like-btn {
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+  min-width: 52px;      /* fixed width so the timestamp column left of it doesn't shift */
+  text-align: right;    /* keep the ♥ flush to the right, count to its left */
+}
+.like-btn:hover:not(:disabled) { background: var(--lantern-soft); color: var(--lantern); }
+.like-btn:disabled { cursor: default; }
+.like-btn.liked { color: var(--lantern); font-weight: 700; }
+
+/* Timestamp · like · read check share a right-aligned meta cluster so the three
+   columns line up at identical offsets from the card's right edge. */
+.meta { display: flex; align-items: center; margin-left: auto; flex-shrink: 0; }
+.meta > * { flex-shrink: 0; }
+.meta > * + * { margin-left: 12px; }
+.meta .when + .like-btn { margin-left: 28px; } /* extra room between time and heart */
+
+.counts-mid { display: inline-flex; gap: 16px; align-items: center; }
+
+/* 💬 reply toggle (only when a post has captured replies) */
+.reply-toggle {
+  background: none;
+  border: none;
+  font: inherit;
+  color: var(--ink-soft);
+  cursor: pointer;
+  padding: 0;
+  border-radius: 5px;
+  white-space: nowrap;
+}
+.reply-toggle:hover { color: var(--ink); text-decoration: underline; }
+.reply-toggle.open { color: var(--ink); font-weight: 600; }
+
+/* Threads: each top-level post + its expanded replies form one block. Cards
+   inside butt together (no vertical gap); only the last card keeps its natural
+   bottom margin so the block stays separated from the next. Each reply level is
+   nudged right by 5px (inline margin-left set in JS). A thread with no expanded
+   replies is a single card, so it looks exactly as before. */
+.thread .post, .thread .post-collapsed { margin-bottom: 0; }
+.thread > .post:last-child { margin-bottom: 10px; }
+.thread > .post-collapsed:last-child { margin-bottom: 6px; }
+
+.translate-btn {
+  background: none;
+  border: none;
+  font: inherit;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 5px;
+  filter: grayscale(1);
+  opacity: 0.6;
+}
+.translate-btn:hover:not(:disabled) { background: var(--paper); filter: none; opacity: 1; }
+.translate-btn.translated { filter: none; opacity: 1; }
+
+.post-foot .spacer { flex: 1; }
+
+.action {
+  background: none;
+  border: none;
+  color: var(--ink-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 3px 6px;
+  border-radius: 5px;
+}
+.action:hover { background: var(--paper); color: var(--ink); }
+.action:focus-visible { outline: 2px solid var(--lantern); }
+a.action { text-decoration: none; }
+
+.empty {
+  text-align: center;
+  color: var(--ink-soft);
+  margin-top: 80px;
+}
+.empty a { color: var(--ink); }
+
+/* ------- topbar second row ------- */
+
+.subbar {
+  width: 100%;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+/* Mark-unread controls (left) and pipeline-status (right) each take equal flex,
+   so the tabs in between land centered. */
+.sub-left { display: flex; align-items: center; gap: 8px; flex: 1; min-width: 0; }
+.subbar .tabs { flex: 0 0 auto; }
+.subbar input[type="datetime-local"] {
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: #fff;
+  padding: 4px 8px;
+  font-size: 13px;
+  color-scheme: dark;
+}
+#pipeline-status { flex: 1; min-width: 0; text-align: right; }
+
+/* ------- upcoming events (agenda) ------- */
+
+.list-wrap { max-width: 760px; margin: 0 auto; padding: 0 16px; }
+.list-wrap .list { padding-left: 0; padding-right: 0; }
+
+/* Timeline / Events tabs — live in the dark banner (second row, centered). */
+.tabs {
+  display: flex;
+  gap: 2px;
+  align-items: center;
+}
+.tab {
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(242, 244, 248, 0.6);
+  padding: 6px 10px;
+  cursor: pointer;
+  border-bottom: 2px solid transparent;
+  white-space: nowrap;
+}
+.tab:hover { color: #f2f4f8; }
+.tab.active {
+  color: #fff;
+  border-bottom-color: var(--lantern);
+}
+
+.events {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 0 0 10px 10px;
+  border-top: none;
+  padding: 12px 14px;
+  margin: 0 0 6px;
+}
+.events-empty { color: var(--ink-soft); font-size: 14px; margin: 8px 0; }
+.event-detail {
+  font-size: 13px;
+  color: var(--ink);
+  margin-top: 3px;
+}
+.event-row {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 5px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+}
+.event-row:first-child { border-top: none; }
+.event-date {
+  flex-shrink: 0;
+  width: 100px;
+  font-weight: 700;
+  font-size: 13px;
+  color: var(--ink);
+}
+.event-body { flex: 1; min-width: 0; }
+.event-name { font-weight: 600; }
+.event-meta { font-size: 12.5px; color: var(--ink-soft); }
+.event-badge {
+  margin-left: 8px;
+  font-size: 11px;
+  font-weight: 700;
+  color: #fff;
+  background: var(--lantern);
+  border-radius: 4px;
+  padding: 1px 6px;
+  vertical-align: middle;
+}
+.event-warn .event-date, .event-warn .event-name { color: var(--lantern); }
+
+/* pin / hide toggles */
+.event-actions { display: flex; align-items: center; gap: 2px; flex-shrink: 0; align-self: flex-start; }
+.event-flag {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 6px;
+  opacity: 0.4;
+  filter: grayscale(1);
+}
+.event-flag:hover { opacity: 0.9; filter: none; background: var(--paper); }
+.event-flag.active { opacity: 1; filter: none; }
+
+.event-row.event-pinned { background: #fff9e6; box-shadow: inset 3px 0 0 #e0a500; }
+.event-row.event-hidden { opacity: 0.5; }
+
+/* source-post links on a group */
+.event-sources { margin-top: 3px; display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
+.event-sources .src-label { font-size: 12px; color: var(--ink-soft); }
+.event-sources .src-link {
+  min-width: 20px;
+  text-align: center;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+/* ------- LLM enrichment on cards ------- */
+
+.llm-summary {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  font-size: 14px;
+  color: var(--ink);
+  background: #f2f4f8;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.llm-summary .summary-text { flex: 1; min-width: 0; overflow-wrap: break-word; }
+.post-collapsed .llm-summary { margin-bottom: 0; }
+.llm-event {
+  font-size: 13.5px;
+  font-weight: 600;
+  background: #eef4ec;
+  border-radius: 6px;
+  padding: 6px 10px;
+  margin-bottom: 6px;
+}
+.llm-event.warn { background: var(--lantern-soft); color: var(--lantern); }
+.llm-translation {
+  font-size: 14px;
+  white-space: pre-wrap;
+  border-left: 3px solid var(--ink-soft);
+  padding: 4px 10px;
+  margin-top: 8px;
+  color: var(--ink);
+  background: var(--paper);
+  border-radius: 0 6px 6px 0;
+}
+
+.chip {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  border: 1px solid var(--line);
+  background: var(--paper);
+  border-radius: 999px;
+  padding: 1px 8px;
+  white-space: nowrap;
+}
+
+/* Tier shown via card background + left border color:
+   Main = white / blue, Side = light grey / orange, Off topic = darker grey / dark grey.
+   (Not-yet-analyzed posts have no tier: neutral hairline border.) */
+/* Not yet analyzed: vivid red border + very pale red wash, so pending posts
+   stand out until the pipeline gives them a tier. */
+.post.tier-none { border-left: 4px solid #ff2d2d; background: #fdf0f0; }
+.post.tier-full { background: var(--card); border-left: 4px solid #2f6fb0; }
+.post.tier-summary { background: #ecebe4; border-left: 4px solid var(--lantern); }
+.post.tier-other, .post-collapsed.tier-other { background: #e0ddd3; border-left: 4px solid #6f6d64; }
+
+/* ------- collapsed tier-3 rows ------- */
+
+.post-collapsed {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 14px; /* right padding matches .post so the meta cluster aligns */
+  margin-bottom: 6px;
+  font-size: 13px;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+.post-collapsed:hover { border-color: var(--ink-soft); }
+.post-collapsed.read { opacity: var(--read-dim); }
+.collapsed-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.collapsed-head .spacer { flex: 1; }
+.post-collapsed .rt-mini { flex-shrink: 0; font-size: 12px; }
+.post-collapsed .who-mini { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.post-collapsed .when { margin-left: 0; flex-shrink: 0; }
+.post-collapsed .like-btn { flex-shrink: 0; }
+.post-collapsed .gist {
+  overflow-wrap: break-word;
+  color: var(--ink);
+}
+.collapsed-check {
+  flex-shrink: 0;
+  background: none;
+  border: 1px solid #a8a494; /* darker than --line for contrast on the grey tiers */
+  border-radius: 5px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 3px 6px;
+}
+.collapsed-check:hover { background: var(--lantern-soft); color: var(--lantern); border-color: var(--lantern); }
+.post-collapsed.read .collapsed-check,
+.post.read .collapsed-check { color: var(--lantern); border-color: var(--lantern); }
+
+.post.flash { outline: 3px solid var(--lantern); outline-offset: 2px; }
+
+/* ------- context menu (✓ read control) ------- */
+
+.ctx-menu {
+  position: fixed;
+  z-index: 100;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(27, 42, 74, 0.18);
+  padding: 4px;
+  min-width: 160px;
+}
+.ctx-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  white-space: nowrap;
+  background: none;
+  border: none;
+  font: inherit;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 7px 10px;
+  border-radius: 5px;
+  cursor: pointer;
+}
+.ctx-item:hover { background: var(--paper); }
+.ctx-header {
+  padding: 6px 10px 5px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--ink-soft);
+  white-space: nowrap;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 3px;
+}
+
+/* Sync "back to date/time" popover */
+.date-pop { display: flex; flex-direction: column; gap: 8px; padding: 10px; }
+.date-pop input {
+  font: inherit;
+  font-size: 13px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: var(--paper);
+}
+.date-pop .btn {
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  border-color: var(--line);
+  background: var(--card);
+}
+.date-pop .btn:hover { background: var(--paper); }
+
+@media (prefers-reduced-motion: no-preference) {
+  .post { transition: opacity 0.15s ease; }
+}
+
+@media (max-width: 640px) {
+  #search { min-width: 140px; flex: 1; }
+  .media img { height: 96px; }
+}

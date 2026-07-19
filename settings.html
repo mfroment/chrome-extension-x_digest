@@ -1,0 +1,62 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>X Digest — Settings</title>
+  <link rel="stylesheet" href="settings.css" />
+</head>
+<body>
+  <main class="page">
+    <h1>X Digest — Settings</h1>
+
+    <section>
+      <h2>Claude API (shared)</h2>
+      <label for="api-key">API key</label>
+      <div class="row">
+        <input type="password" id="api-key" placeholder="sk-ant-…" autocomplete="off" />
+        <button id="toggle-key" class="btn" type="button">Show</button>
+      </div>
+      <p class="hint">Stored locally in the extension. Only sent to api.anthropic.com.</p>
+
+      <label for="model">Model</label>
+      <input type="text" id="model" />
+      <p class="hint">Used for classification, summaries, extraction and translation.</p>
+
+      <label for="language">Output language</label>
+      <input type="text" id="language" />
+      <p class="hint">Language for summaries, extracted event details and translations. Leave blank to use your browser's language.</p>
+    </section>
+
+    <section>
+      <h2>X accounts</h2>
+      <p class="hint">Accounts appear here automatically after you browse x.com while logged in
+        (with the extension active). Digests are <strong>off by default</strong>: nothing is
+        captured or stored for an account until you enable it. Criteria are per account.</p>
+      <div id="accounts-list"></div>
+      <p class="hint" id="no-accounts" hidden>No account seen yet — open x.com, log in, and
+        scroll the timeline once, then come back here.</p>
+    </section>
+
+    <section>
+      <h2>Data (backup)</h2>
+      <p class="hint">Everything lives only in this browser — clearing browser data or
+        removing the extension wipes it. Export a JSON backup of your captured posts and
+        read/like/hidden state; import it into a fresh install to restore. The backup does
+        <strong>not</strong> include your API key.</p>
+      <div class="row">
+        <button id="export-data" class="btn" type="button">Export backup…</button>
+        <button id="import-data" class="btn" type="button">Import backup…</button>
+        <input type="file" id="import-file" accept="application/json,.json" hidden />
+      </div>
+      <p class="hint" id="data-status" aria-live="polite"></p>
+    </section>
+
+    <div class="actions">
+      <button id="save" class="btn primary" type="button">Save</button>
+      <span id="status" class="status"></span>
+    </div>
+  </main>
+  <script type="module" src="settings.js"></script>
+</body>
+</html>
