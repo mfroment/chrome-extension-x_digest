@@ -61,3 +61,9 @@ Everything is local: the extension's IndexedDB (database `x-digest`, store
 `posts`) and chrome.storage.local (settings, per-account config, session
 token). Removing the extension removes the data. Nothing is sent anywhere except
 X and the Anthropic API.
+
+## License
+
+Licensed under the **GNU General Public License v3.0** — see [LICENSE](LICENSE).
+
+Copyright (c) 2026 mfroment
