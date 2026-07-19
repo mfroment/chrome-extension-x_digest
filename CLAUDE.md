@@ -245,6 +245,30 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Digest navigation + scroll UX (v0.10.1)
+
+Reading-position polish, mostly around the Events→Timeline jump.
+- Events "View post" (`bindEventPostButton`): LEFT-click jumps to the post in the
+  Timeline (`jumpToPost` → reveals its folded/limit-hidden day, then `focusPost`
+  centres + flashes, re-centring a few times as lazy media settle). It NO LONGER
+  opens X on a miss. RIGHT-click → a "Open in X" context item (`xPostUrl`:
+  handle-based, or the id-only `x.com/i/status/<id>` fallback).
+- Per-tab scroll memory (`tabScroll`): each tab keeps its own scroll (the window
+  scroll is shared), so bouncing to a Timeline post and back to Events doesn't
+  drag Events to the Timeline's position. Restored in `setTab`.
+- Scroll ANCHORING in `render()` (`scrollAnchor`/`restoreScroll`): anchors to the
+  timeline post nearest the viewport centre (`elementFromPoint(...).closest('[data-id]')`)
+  and `scrollBy`s the delta after rebuild, so re-renders (Analyze, Refresh,
+  mark-read, Unread-only toggle) keep the viewed post fixed instead of jumping.
+  Falls back to the raw offset (Events tab / no anchor). F5 resets to top (fine).
+- "Unread only" single-post exception (`focusExceptionId`): jumping to a READ post
+  keeps the filter ON but shows just that one post (filter: `!t.read || id ===
+  focusExceptionId`). One id, overwritten per jump; cleared by Analyze, the
+  Refresh button and sort change; gone on F5. Deliberately NOT cleared by
+  mark-read/undo/thread-expand (avoids brittle catch-all clearing).
+- Settings Export filename now carries a full local datetime
+  (`x-digest-backup-YYYY-MM-DD_HH-MM-SS.json`) via `localTimestamp()`.
+
 ## Generalization + privacy pass (v0.10.0)
 
 Made the extension subject-neutral and open-ended for any user (it had grown a

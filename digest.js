@@ -37,8 +37,13 @@ const tabTimelineEl = document.getElementById('tab-timeline');
 const tabEventsEl = document.getElementById('tab-events');
 
 let activeTab = 'timeline'; // 'timeline' | 'events'
+// Each tab remembers its own scroll position. The window scroll is shared, so
+// without this, jumping to a post deep in the Timeline and switching back to
+// Events would leave Events scrolled to that same deep position.
+const tabScroll = { timeline: 0, events: 0 };
 
 function setTab(tab) {
+  if (tab !== activeTab) tabScroll[activeTab] = window.scrollY; // remember where we were
   activeTab = tab;
   localStorage.setItem('bd-tab', tab);
   tabTimelineEl.classList.toggle('active', tab === 'timeline');
@@ -48,6 +53,7 @@ function setTab(tab) {
   document.getElementById('timeline-controls').hidden = tab !== 'timeline';
   document.getElementById('events-controls').hidden = tab !== 'events';
   render(); // folding depends on the active tab
+  window.scrollTo(0, tabScroll[tab] || 0); // restore the destination tab's position
 }
 
 let all = [];          // all records (every account; filtered at render time)
@@ -56,6 +62,12 @@ let eventGroups = [];  // clustered event groups (from the `events` store)
 let sortAsc = true;    // oldest first (reading order)
 const expanded = new Set();   // ids of manually expanded "other"-tier cards
 const threadOpen = new Set(); // ids whose captured replies are expanded inline
+// The last post jumped to (Events "View post"), shown even while "Unread only"
+// is on WITHOUT turning the filter off. Just one id, overwritten on the next
+// jump. Cleared explicitly by Analyze, the Refresh button and sort change; gone
+// on page reload (F5). Not touched by mark-read / undo / thread-expand, so those
+// don't disturb it. At most one read post lingers in the unread list — benign.
+let focusExceptionId = null;
 let childrenById = new Map(); // parent id -> captured reply records (built per render)
 
 // Fully-read days fold under their date. Show the 5 most-recent read days; the
@@ -217,7 +229,7 @@ function visiblePosts() {
       return hay.includes(q);
     });
   }
-  if (unreadOnly()) items = items.filter((t) => !t.read);
+  if (unreadOnly()) items = items.filter((t) => !t.read || t.id === focusExceptionId);
   return items;
 }
 
@@ -271,10 +283,34 @@ function appendThread(container, t, depth, seen) {
   }
 }
 
+// Keep the reading position stable across re-renders: anchor to the timeline
+// post nearest the viewport centre, so content changing above it (new posts,
+// filter or analysis changes) doesn't shift what you're reading. Falls back to
+// the raw scroll offset when there's nothing to anchor to (e.g. the Events tab).
+function scrollAnchor() {
+  if (activeTab === 'timeline') {
+    const el = document
+      .elementFromPoint(window.innerWidth / 2, window.innerHeight / 2)
+      ?.closest('[data-id]');
+    if (el && listEl.contains(el)) {
+      return { id: el.dataset.id, top: el.getBoundingClientRect().top };
+    }
+  }
+  return { y: window.scrollY };
+}
+
+function restoreScroll(a) {
+  if (a.id) {
+    const el = listEl.querySelector(`[data-id="${CSS.escape(a.id)}"]`);
+    if (el) return window.scrollBy(0, el.getBoundingClientRect().top - a.top);
+  }
+  if (typeof a.y === 'number') window.scrollTo(0, a.y);
+}
+
 function render() {
   buildThreadIndex();
   const items = visiblePosts();
-  const scrollY = window.scrollY;
+  const anchor = scrollAnchor();
 
   listEl
     .querySelectorAll('.thread, .day-sep, .reading-line, .more-days')
@@ -370,7 +406,7 @@ function render() {
   }
 
   listEl.appendChild(frag);
-  window.scrollTo(0, scrollY);
+  restoreScroll(anchor);
   renderEvents();
   updateStats();
 }
@@ -597,7 +633,8 @@ function xPostUrl(pid) {
 
 function jumpToPost(id) {
   expanded.add(id);
-  setUnreadOnly(false);
+  // Show this one post even if "Unread only" is on, without turning the filter off.
+  focusExceptionId = id;
   // Reveal the target's day if it's folded (fully-read day collapsed to a header).
   const t = byId.get(id);
   if (t) unfoldedDays.add(dayKey(t.created_at));
@@ -1074,6 +1111,7 @@ async function reanalyze(opts) {
     pipelineStatusEl.textContent = 'No account enabled.';
     return;
   }
+  focusExceptionId = null; // Analyze drops the jumped-to exception
   const global = await loadGlobal();
   if (!global.apiKey) {
     chrome.runtime.openOptionsPage();
@@ -1437,6 +1475,7 @@ sortOrderEl.addEventListener('click', () => {
   sortAsc = !sortAsc;
   localStorage.setItem('bd-sort-asc', sortAsc ? '1' : '');
   sortOrderEl.textContent = sortAsc ? 'Oldest first' : 'Newest first';
+  focusExceptionId = null; // sort change drops the jumped-to exception
   render();
 });
 
@@ -1457,7 +1496,10 @@ eventSortEl.addEventListener('click', () => {
   eventSortEl.textContent = eventSortAsc ? 'Oldest first' : 'Newest first';
   renderEvents();
 });
-document.getElementById('refresh').addEventListener('click', load);
+document.getElementById('refresh').addEventListener('click', () => {
+  focusExceptionId = null; // the Refresh button drops the jumped-to exception
+  load();
+});
 document.getElementById('analyze').addEventListener('click', () => analyze());
 document.getElementById('analyze').addEventListener('contextmenu', (e) => {
   e.preventDefault();
