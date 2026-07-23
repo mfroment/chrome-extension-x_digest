@@ -45,6 +45,23 @@ window.addEventListener('message', (event) => {
     return;
   }
 
+  // A native like/unlike on x.com. `post` carries the full record when we've
+  // seen it (so an explicitly-liked reply that isn't stored yet can be recorded);
+  // updates/inserts are by id, so nothing is duplicated.
+  if (data.__xDigestLike === true && data.id) {
+    const account = detectAccount();
+    chrome.runtime
+      .sendMessage({
+        type: 'XD_LIKE_OBSERVED',
+        id: data.id,
+        on: !!data.on,
+        post: data.post || null,
+        account,
+      })
+      .catch(() => {});
+    return;
+  }
+
   if (data.__xDigest !== true || !Array.isArray(data.posts)) return;
 
   const account = detectAccount();

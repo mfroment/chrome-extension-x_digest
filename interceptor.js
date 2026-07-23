@@ -7,7 +7,13 @@
 
   // GraphQL operations to intercept. If X renames its operations, adjust here
   // (DevTools > Network > filter "graphql" > find the operation name after the hash in the URL).
-  const OPS = /\/i\/api\/graphql\/[^/]+\/(HomeLatestTimeline|HomeTimeline)/;
+  // Responses we PARSE. HomeLatestTimeline (Following/Latest) and HomeTimeline
+  // (For You) are stored wholesale — that's your feed. TweetDetail (a post's
+  // conversation view) is only CACHED, never stored on its own: the replies
+  // below a post are usually noise, so they stay out of the digest UNLESS you
+  // explicitly like one — then noteLikeAction ships just that cached record.
+  const SHIP_OPS = /\/i\/api\/graphql\/[^/]+\/(HomeLatestTimeline|HomeTimeline)/;
+  const CAPTURE_OPS = /\/i\/api\/graphql\/[^/]+\/(HomeLatestTimeline|HomeTimeline|TweetDetail)/;
 
   const MARKER = '__xDigest';
 
@@ -133,23 +139,35 @@
     }
   }
 
-  // `op` is the timeline operation the batch came from (HomeLatestTimeline =
-  // Following/Latest, HomeTimeline = For You). Sync uses it to confirm it is
-  // scrolling the Following feed, without depending on localized UI text.
-  function ship(json, op) {
+  // Records seen in ANY parsed response, kept so a liked post can be stored with
+  // its full content even when it came from a view we don't store wholesale
+  // (a reply in TweetDetail). Bounded; oldest entries evicted first.
+  const recordCache = new Map(); // id -> record
+  const CACHE_CAP = 1000;
+  function cacheRecord(rec) {
+    if (!rec || !rec.id) return;
+    recordCache.delete(rec.id); // refresh recency
+    recordCache.set(rec.id, rec);
+    if (recordCache.size > CACHE_CAP) {
+      recordCache.delete(recordCache.keys().next().value); // evict oldest
+    }
+  }
+
+  // Parse a captured response: cache every post it contains, and SHIP the batch
+  // for wholesale storage only when it came from a home feed (SHIP_OPS). The `op`
+  // tag (HomeLatestTimeline / HomeTimeline) lets Sync confirm it is on the
+  // Following feed without depending on localized UI text.
+  function handleResponse(json, url) {
     try {
       const posts = extractPosts(json);
-      if (posts.length > 0) {
-        window.postMessage({ [MARKER]: true, posts, op: op || null }, window.location.origin);
+      for (const p of posts) cacheRecord(p);
+      const m = SHIP_OPS.exec(url || '');
+      if (m && posts.length > 0) {
+        window.postMessage({ [MARKER]: true, posts, op: m[1] }, window.location.origin);
       }
     } catch (e) {
       /* silent: never break the page */
     }
-  }
-
-  function opName(url) {
-    const m = OPS.exec(url || '');
-    return m ? m[1] : null;
   }
 
   // ---------------------------------------------------------------------------
@@ -255,6 +273,34 @@
     }
   }
 
+  // A like/unlike the user performed NATIVELY on x.com. We learn it from the
+  // FavoriteTweet/UnfavoriteTweet mutation X sends on click (no request of our
+  // own), and reflect it onto the stored post so the digest shows it after a
+  // Refresh. Call only once the mutation has succeeded.
+  function noteLikeAction(url, body) {
+    try {
+      const m = GQL_OP.exec(url || '');
+      const op = m && m[2];
+      if (op !== 'FavoriteTweet' && op !== 'UnfavoriteTweet') return;
+      if (typeof body !== 'string' || !body) return;
+      const id = JSON.parse(body)?.variables?.tweet_id;
+      if (!id) return;
+      // Include the full cached record (if we've seen it) so a liked reply that
+      // isn't stored yet can be recorded with its content, not just its id.
+      window.postMessage(
+        {
+          __xDigestLike: true,
+          id: String(id),
+          on: op === 'FavoriteTweet',
+          post: recordCache.get(String(id)) || null,
+        },
+        window.location.origin,
+      );
+    } catch (e) {
+      /* silent */
+    }
+  }
+
   const scannedUrls = new Set();
   async function scanBundle(url) {
     if (scannedUrls.has(url)) return;
@@ -324,15 +370,21 @@
       if (url.includes('/i/api/')) sniffHeaders(input, args[1]);
       if (url.includes('/i/api/graphql/')) {
         noteOp(url);
-        if (typeof args[1]?.body === 'string') captureBody(url, args[1].body);
+        const body = typeof args[1]?.body === 'string' ? args[1].body : null;
+        if (body) {
+          captureBody(url, body);
+          // Native like/unlike: reflect it once the mutation actually succeeds.
+          if (opNameIfUsed(url)) {
+            p.then((resp) => resp.ok && noteLikeAction(url, body)).catch(() => {});
+          }
+        }
       }
-      if (OPS.test(url)) {
-        const op = opName(url);
+      if (CAPTURE_OPS.test(url)) {
         p.then((resp) => {
           resp
             .clone()
             .json()
-            .then((j) => ship(j, op))
+            .then((j) => handleResponse(j, url))
             .catch(() => {});
         }).catch(() => {});
       }
@@ -349,11 +401,11 @@
         this.__bdUrl = url;
         noteOp(url);
       }
-      if (typeof url === 'string' && OPS.test(url)) {
-        const op = opName(url);
+      if (typeof url === 'string' && CAPTURE_OPS.test(url)) {
+        const capturedUrl = url;
         this.addEventListener('load', function () {
           try {
-            ship(JSON.parse(this.responseText), op);
+            handleResponse(JSON.parse(this.responseText), capturedUrl);
           } catch (e) {
             /* silent */
           }
@@ -368,7 +420,17 @@
   const origXhrSend = XMLHttpRequest.prototype.send;
   XMLHttpRequest.prototype.send = function (body) {
     try {
-      if (this.__bdUrl && typeof body === 'string') captureBody(this.__bdUrl, body);
+      if (this.__bdUrl && typeof body === 'string') {
+        captureBody(this.__bdUrl, body);
+        // Native like/unlike over XHR: reflect it on a 2xx response.
+        if (opNameIfUsed(this.__bdUrl)) {
+          const url = this.__bdUrl;
+          const b = body;
+          this.addEventListener('load', function () {
+            if (this.status >= 200 && this.status < 300) noteLikeAction(url, b);
+          });
+        }
+      }
     } catch (e) {
       /* silent */
     }

@@ -3,7 +3,7 @@
 // unknown accounts (disabled by default), stores posts only for enabled
 // accounts, keeps the badge scoped to enabled accounts, opens the digest.
 
-import { putPosts, countUnread, getAllPosts } from './db.js';
+import { putPosts, countUnread, getAllPosts, applyLike } from './db.js';
 import { CRITERIA_DEFAULTS, loadAccounts, saveAccounts } from './defaults.js';
 
 const DIGEST_URL = chrome.runtime.getURL('digest.html');
@@ -31,6 +31,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     likePost(msg.postId, msg.accountId, msg.on)
       .then((result) => sendResponse(result))
       .catch((e) => sendResponse({ error: e?.message || String(e) }));
+    return true;
+  }
+  if (msg?.type === 'XD_LIKE_OBSERVED' && msg.id) {
+    handleObservedLike(msg)
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
   if (msg?.type === 'XD_REFRESH_BADGE') {
@@ -317,6 +323,24 @@ function likePost(postId, accountId, on) {
   return on
     ? xMutation(accountId, 'FavoriteTweet', { tweet_id: postId }, /already favorited/i)
     : xMutation(accountId, 'UnfavoriteTweet', { tweet_id: postId }, /not.*(favorited|found)/i);
+}
+
+// A native like/unlike observed on x.com. Explicitly LIKING records the post
+// with its full content (insert-or-update via handlePosts, which respects the
+// account-enabled gate) so it enters the digest. Everything else — an unlike, or
+// a like we have no cached record for — only updates the stored post in place
+// and inserts nothing, so browsing never pulls unrelated posts into the digest.
+async function handleObservedLike({ id, on, post, account }) {
+  if (on && post && post.id === id && account?.id) {
+    const rec = {
+      ...post,
+      favorited: true,
+      favorite_count: Math.max(0, (post.favorite_count || 0) + 1),
+    };
+    return handlePosts([rec], account);
+  }
+  const changed = await applyLike(id, !!on);
+  return { ok: true, changed };
 }
 
 async function handlePosts(posts, account) {

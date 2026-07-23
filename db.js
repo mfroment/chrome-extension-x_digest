@@ -253,6 +253,21 @@ export async function toggleRead(id) {
 }
 
 /**
+ * Reflect a like/unlike observed natively on x.com onto an EXISTING post
+ * (no-op if we don't have it — nothing is inserted, so no duplicate rows).
+ * Optimistic count nudge; the exact count self-corrects on the next capture.
+ * Returns true if the state changed, false if already in that state, null if absent.
+ */
+export async function applyLike(id, on) {
+  return updateRecord(id, (t) => {
+    if (!!t.favorited === !!on) return false;
+    t.favorited = !!on;
+    t.favorite_count = Math.max(0, (t.favorite_count || 0) + (on ? 1 : -1));
+    return true;
+  });
+}
+
+/**
  * Restore fields in one transaction (for undo). `updates`: [{id, field, value,
  * store?}] — `store` is 'posts' (default) or 'events', so undo spans both.
  */

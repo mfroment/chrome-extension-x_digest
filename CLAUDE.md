@@ -245,6 +245,33 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Native-like capture + like-gated detail-page storage (v0.10.2)
+
+Browsing x.com keeps liked-state and counts fresh with NO extra API calls — it
+only parses X's own traffic (same passive posture as capture).
+- Two op classes in interceptor.js: `SHIP_OPS` (HomeLatestTimeline / HomeTimeline)
+  are stored WHOLESALE as before — that's your feed, everything is recorded.
+  `CAPTURE_OPS` additionally includes `TweetDetail` (a post's conversation view),
+  but those posts are only CACHED (`recordCache`, id→record, bounded 1000),
+  NEVER stored on their own — the replies below a post are usually noise.
+  `handleResponse` caches every parsed post and ships only SHIP_OPS batches.
+- Native like/unlike: interceptor watches the FavoriteTweet/UnfavoriteTweet
+  mutation X sends on click (`noteLikeAction`, on a 2xx/ok response) → posts
+  `__xDigestLike {id, on, post}` (`post` = the cached full record if we've seen
+  it) → content.js adds the account → `XD_LIKE_OBSERVED` → background
+  `handleObservedLike`:
+  - LIKE with a record → `handlePosts([{...post, favorited:true, count+1}])`
+    (insert-or-update, respects the account-enabled gate) so the explicitly liked
+    post — even a reply not otherwise stored — ENTERS the digest.
+  - unlike, or a like with no cached record → `db.applyLike(id, on)` (UPDATE-ONLY;
+    no-op if absent). Nothing unrelated is ever inserted.
+  So home browsing records everything; detail-page browsing records ONLY what you
+  explicitly like. Dedup is by id → never duplicated. The optimistic count
+  self-corrects on the next real capture. The digest's OWN ♥ runs from the service
+  worker (not the page), so it doesn't re-trigger this path.
+- Does NOT advance `syncBoundary` — only a completed Sync does — so browsing
+  refreshes/records without moving the "last synced" marker or plugging the gap.
+
 ## Digest navigation + scroll UX (v0.10.1)
 
 Reading-position polish, mostly around the Events→Timeline jump.
