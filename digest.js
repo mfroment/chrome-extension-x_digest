@@ -87,6 +87,16 @@ const eventSortEl = document.getElementById('event-sort-order');
 let eventSortAsc = true;
 const eventUnhiddenOnly = () => eventUnhiddenEl.getAttribute('aria-pressed') === 'true';
 
+// Past events are shown only when "Unhidden only" is OFF, folded by date with the
+// same staggered "show older" limit as the Timeline's read days.
+const EVENT_PAST_LIMITS = [5, 15, 35, 85, Infinity];
+let eventPastLimitIdx = 0;
+const eventUnfoldedDates = new Set(); // past event dates the user manually expanded
+function resetEventFolding() {
+  eventPastLimitIdx = 0;
+  eventUnfoldedDates.clear();
+}
+
 // Lazy-load avatar images only when their card scrolls into view.
 const avatarObserver = new IntersectionObserver(
   (entries, obs) => {
@@ -487,10 +497,10 @@ function renderEvents() {
   let groups = eventGroups.filter(
     (g) =>
       g.account === selectedAccount &&
-      // "current" until the END date passes (multi-day events stay); falls back
-      // to the start date for events with no end.
-      (g.end_date || g.date) >= todayISO &&
-      (showHidden || g.flag !== 'hidden'),
+      // "Unhidden only" ON = the agenda: current (until the END date passes),
+      // non-hidden events. OFF reveals everything, including PAST events (folded
+      // below) and hidden ones.
+      (showHidden || ((g.end_date || g.date) >= todayISO && g.flag !== 'hidden')),
   );
   if (q) {
     groups = groups.filter((g) => {
@@ -508,57 +518,164 @@ function renderEvents() {
     return (a.flag === 'pinned' ? 0 : 1) - (b.flag === 'pinned' ? 0 : 1);
   });
 
+  const isPast = (g) => (g.end_date || g.date) < todayISO;
+  const upcoming = groups.filter((g) => !isPast(g));
+  const past = groups.filter(isPast);
+
   eventsListEl.textContent = '';
-  let shown = 0;
-  for (const g of groups) {
-    shown++;
-    const row = document.createElement('div');
-    row.className =
-      'event-row' +
-      (g.status === 'cancelled' || g.status === 'postponed' ? ' event-warn' : '') +
-      (g.flag === 'pinned' ? ' event-pinned' : '') +
-      (g.flag === 'hidden' ? ' event-hidden' : '');
+  const upcomingFrag = document.createDocumentFragment();
+  for (const g of upcoming) upcomingFrag.appendChild(eventRow(g));
+  const pastFrag = past.length ? buildPastEvents(past) : null;
 
-    const date = document.createElement('div');
-    date.className = 'event-date';
-    date.textContent = fmtEventRange(g.date, g.end_date);
+  const frag = document.createDocumentFragment();
+  // Oldest-first: past (older) above the agenda; newest-first: agenda above past.
+  if (eventSortAsc) {
+    if (pastFrag) frag.appendChild(pastFrag);
+    frag.appendChild(upcomingFrag);
+  } else {
+    frag.appendChild(upcomingFrag);
+    if (pastFrag) frag.appendChild(pastFrag);
+  }
+  eventsListEl.appendChild(frag);
 
-    const body = document.createElement('div');
-    body.className = 'event-body';
-    const title = document.createElement('div');
-    title.className = 'event-name';
-    title.textContent = g.name;
-    if (g.status === 'cancelled' || g.status === 'postponed') {
-      const badge = document.createElement('span');
-      badge.className = 'event-badge';
-      badge.textContent = g.status === 'cancelled' ? 'CANCELLED' : 'POSTPONED';
-      title.appendChild(badge);
+  eventsEmptyEl.hidden = upcoming.length + past.length > 0;
+  // The tab count is the agenda (upcoming) size, as before — past is history.
+  tabEventsEl.textContent = upcoming.length > 0 ? `📅 Events (${upcoming.length})` : '📅 Events';
+}
+
+// One event group rendered as a row (shared by the agenda and the past section).
+function eventRow(g) {
+  const row = document.createElement('div');
+  row.className =
+    'event-row' +
+    (g.status === 'cancelled' || g.status === 'postponed' ? ' event-warn' : '') +
+    (g.flag === 'pinned' ? ' event-pinned' : '') +
+    (g.flag === 'hidden' ? ' event-hidden' : '');
+
+  const date = document.createElement('div');
+  date.className = 'event-date';
+  date.textContent = fmtEventRange(g.date, g.end_date);
+
+  const body = document.createElement('div');
+  body.className = 'event-body';
+  const title = document.createElement('div');
+  title.className = 'event-name';
+  title.textContent = g.name;
+  if (g.status === 'cancelled' || g.status === 'postponed') {
+    const badge = document.createElement('span');
+    badge.className = 'event-badge';
+    badge.textContent = g.status === 'cancelled' ? 'CANCELLED' : 'POSTPONED';
+    title.appendChild(badge);
+  }
+  const meta = document.createElement('div');
+  meta.className = 'event-meta';
+  meta.textContent = [g.time, g.venue].filter(Boolean).join(' · ');
+  body.append(title, meta);
+  if (g.description) {
+    const detail = document.createElement('div');
+    detail.className = 'event-detail';
+    detail.textContent = g.description;
+    body.appendChild(detail);
+  }
+  body.appendChild(eventSources(g));
+
+  const actions = document.createElement('div');
+  actions.className = 'event-actions';
+  actions.append(
+    flagBtn(g, 'pinned', '📌', 'Pin — plan to attend'),
+    flagBtn(g, 'hidden', '🙈', 'Hide this event'),
+  );
+
+  row.append(date, body, actions);
+  return row;
+}
+
+// Past events (already date-sorted): grouped by date, each date folded by default,
+// showing only the most-recent EVENT_PAST_LIMITS[idx] dates with a staggered
+// "show older" button — mirroring the Timeline's read-day folding.
+function buildPastEvents(past) {
+  const frag = document.createDocumentFragment();
+
+  const dates = [];
+  for (const g of past) {
+    let d = dates.length ? dates[dates.length - 1] : null;
+    if (!d || d.key !== g.date) {
+      d = { key: g.date, events: [] };
+      dates.push(d);
     }
-    const meta = document.createElement('div');
-    meta.className = 'event-meta';
-    meta.textContent = [g.time, g.venue].filter(Boolean).join(' · ');
-    body.append(title, meta);
-    if (g.description) {
-      const detail = document.createElement('div');
-      detail.className = 'event-detail';
-      detail.textContent = g.description;
-      body.appendChild(detail);
-    }
-    body.appendChild(eventSources(g));
-
-    const actions = document.createElement('div');
-    actions.className = 'event-actions';
-    actions.append(
-      flagBtn(g, 'pinned', '📌', 'Pin — plan to attend'),
-      flagBtn(g, 'hidden', '🙈', 'Hide this event'),
-    );
-
-    row.append(date, body, actions);
-    eventsListEl.appendChild(row);
+    d.events.push(g);
   }
 
-  eventsEmptyEl.hidden = shown > 0;
-  tabEventsEl.textContent = shown > 0 ? `📅 Events (${shown})` : '📅 Events';
+  // Keep the most-recent N past dates (closest to today); collapse the rest.
+  const limit = EVENT_PAST_LIMITS[eventPastLimitIdx];
+  const recent = new Set(
+    dates
+      .slice()
+      .sort((a, b) => (a.key < b.key ? 1 : -1))
+      .slice(0, limit)
+      .map((d) => d.key),
+  );
+  const hiddenCount = dates.length - recent.size;
+
+  const label = document.createElement('div');
+  label.className = 'event-past-label';
+  label.textContent = 'Past events';
+  frag.appendChild(label);
+
+  for (const d of dates) {
+    if (!recent.has(d.key)) continue;
+    const folded = !eventUnfoldedDates.has(d.key);
+    frag.appendChild(pastDateHeader(d, folded));
+    if (!folded) for (const g of d.events) frag.appendChild(eventRow(g));
+  }
+
+  if (hiddenCount > 0) {
+    const btn = morePastDatesBtn(hiddenCount);
+    // Older dates sit at the far (oldest) end: just after the label when
+    // oldest-first, at the very bottom when newest-first.
+    if (eventSortAsc) frag.insertBefore(btn, frag.childNodes[1] || null);
+    else frag.appendChild(btn);
+  }
+  return frag;
+}
+
+// A foldable date header for the past-events section (▸/▾ + event count).
+function pastDateHeader(d, folded) {
+  const el = document.createElement('div');
+  el.className = 'day-sep foldable';
+  const mid = document.createElement('span');
+  mid.className = 'day-sep-mid';
+  const arrow = document.createElement('span');
+  arrow.className = 'fold-arrow';
+  arrow.textContent = folded ? '▸' : '▾';
+  const name = document.createElement('span');
+  name.textContent = new Date(`${d.key}T00:00:00`).toLocaleDateString('en-GB', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+  });
+  const count = document.createElement('span');
+  count.className = 'day-count';
+  count.textContent = `${d.events.length} event${d.events.length > 1 ? 's' : ''}`;
+  mid.append(arrow, name, count);
+  el.addEventListener('click', () => {
+    if (eventUnfoldedDates.has(d.key)) eventUnfoldedDates.delete(d.key);
+    else eventUnfoldedDates.add(d.key);
+    renderEvents();
+  });
+  el.appendChild(mid);
+  return el;
+}
+
+function morePastDatesBtn(n) {
+  const el = document.createElement('button');
+  el.className = 'more-days';
+  el.textContent = `+ show ${n} older past date${n > 1 ? 's' : ''}`;
+  el.addEventListener('click', () => {
+    if (eventPastLimitIdx < EVENT_PAST_LIMITS.length - 1) eventPastLimitIdx++;
+    renderEvents();
+  });
+  return el;
 }
 
 // Link(s) to every source post backing an event group.
@@ -1488,6 +1605,7 @@ eventUnhiddenEl.addEventListener('click', () => {
   const on = !eventUnhiddenOnly();
   eventUnhiddenEl.setAttribute('aria-pressed', on ? 'true' : 'false');
   localStorage.setItem('bd-event-unhidden', on ? '1' : '');
+  resetEventFolding(); // start the past section collapsed each time it's revealed
   renderEvents();
 });
 eventSortEl.addEventListener('click', () => {
@@ -1562,6 +1680,7 @@ accountEl.addEventListener('change', async () => {
   seedSyncBoundary(selectedAccount);
   expanded.clear();
   resetFolding();
+  resetEventFolding();
   undoStack.length = 0;
   updateUndoBtn();
   await refreshEventGroups(); // ensure/singleton-backfill for the newly selected account

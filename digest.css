@@ -184,6 +184,17 @@ html, body {
 }
 .more-days:hover { background: var(--card); color: var(--ink); border-color: var(--ink-soft); }
 
+/* "Past events" separator in the Events tab (shown when "Unhidden only" is off) */
+.event-past-label {
+  margin: 22px 0 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.75;
+}
+
 /* Reading line: the page signature element */
 .reading-line {
   margin: 20px 0;

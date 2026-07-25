@@ -245,6 +245,49 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Robust event-duplicate merging (v0.10.3)
+
+`pipeline.groupEvents` now runs a DETERMINISTIC merge pass before the LLM, so the
+obvious duplicates the model misses are collapsed reliably.
+- `deterministicClusters`: union-find over the account's upcoming event groups.
+  Two groups are the same event when start dates are within ±1 day AND either
+  their VENUE keys match (same place, names may differ — the Zōjōji case) OR their
+  NAME keys match with a COMPATIBLE venue (same event, one venue missing — the
+  Marunouchi case; requiring venue-compatibility guards two generically-named
+  events at different venues). Keys are normalized into a Latin key (diacritics/
+  macrons stripped, non-alphanumerics removed → "Zōjō-ji"=="Zojoji") and a CJK key
+  (kana + ideographs); matching is EXACT, never substrings. Transitive, so the
+  three Zōjōji entries chain via kanji `増上寺` and romaji `zojoji` even when no
+  single pair shares both scripts.
+- Shared `applyClusters(clusters, byId, postsById, sink)` is used by BOTH the
+  deterministic pass and the LLM pass (the LLM handles the genuinely fuzzy/
+  paraphrased cases on the survivors). Deterministic clusters carry only
+  `memberIds` (the survivor keeps its own fields); LLM clusters also carry
+  canonical name/venue/date/... which then win.
+- Flag priority on merge (`mergeFlag`/`pickSurvivor`): pinned > UNHIDDEN > hidden
+  — a merged group is hidden ONLY if every member was hidden, so hiding some but
+  not all duplicates leaves the result visible.
+- `llm.clusterEvents` prompt tightened: same date + same venue (across
+  transliterations/scripts, or a "Temple"/"Shrine"/"Hall" suffix) = the same event
+  even when names differ; keep two entries separate ONLY when name AND venue both
+  differ.
+- Reprocess EXISTING duplicates via right-click ✨ Analyze → "Re-analyze event
+  posts only" (clears `event_group_id` → fresh singletons → both passes re-run).
+  The `clustered` short-circuit is unchanged, so a normal Analyze still spends a
+  clustering call only when a fresh group exists.
+- KNOWN limitation (unchanged): extraction is one `event` per post, so a single
+  post describing MULTIPLE distinct events still contributes only one. Merging
+  keys on event attributes (date/name/venue), not post identity, so multi-event
+  posts don't corrupt merges.
+- Past-events view: with Events "Unhidden only" OFF, the tab now also lists PAST
+  events (agenda stays upcoming-only when ON). Past events render FOLDED by date
+  (`buildPastEvents`/`pastDateHeader`), showing the most-recent `EVENT_PAST_LIMITS`
+  = [5,15,35,85,∞] dates with a staggered "＋ show older past dates" button —
+  mirroring the Timeline's read-day folding (reuses the `day-sep`/`more-days` CSS).
+  `eventRow` was extracted so the agenda and the past section share row rendering;
+  `resetEventFolding()` runs on the Unhidden toggle + account switch. The event
+  data was never lost — the Events filter was just upcoming-only before.
+
 ## Native-like capture + like-gated detail-page storage (v0.10.2)
 
 Browsing x.com keeps liked-state and counts fresh with NO extra API calls — it

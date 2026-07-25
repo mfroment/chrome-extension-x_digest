@@ -333,11 +333,16 @@ export async function clusterEvents(settings, groups) {
   }
 
   const system =
-    'You group event announcements that refer ' +
-    'to the SAME real-world event. Two entries are the same event when they are within ' +
-    '±1 day of each other AND refer to the same event at the same place. Names and ' +
-    'venues may be written very differently (different scripts, romanizations, other ' +
-    'languages, extra parentheticals) — match on MEANING + date + venue, not exact strings.\n' +
+    'You group event announcements that refer to the SAME real-world event. A ' +
+    'single event is often announced by several accounts that emphasize different ' +
+    'things and write the name/venue very differently (different scripts, ' +
+    'romanizations, translations, extra parentheticals, or a "Temple"/"Shrine"/' +
+    '"Hall" suffix). Match on MEANING + date + place, NOT exact strings:\n' +
+    '- Same date (±1 day) AND same venue → the SAME event, EVEN IF the names differ ' +
+    '(one may stress a deity/sub-name, another just "bon odori"). Treat romaji, ' +
+    'kanji/kana and translated spellings of a venue as the same place.\n' +
+    '- Same date AND same event name → the SAME event even if one entry omits the venue.\n' +
+    '- Keep two entries separate ONLY when they have a DIFFERENT name AND a DIFFERENT place.\n' +
     'Return clusters covering EVERY input: each index appears in exactly one cluster.\n' +
     'For each cluster give: members (the indices), a canonical name (prefer the clearest, ' +
     'most complete; keep the name in its original language/script if there is one), venue, time, date ' +

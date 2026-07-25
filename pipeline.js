@@ -206,63 +206,51 @@ async function groupEvents(settings, accountId, onProgress) {
   if (!groups.some((g) => !g.clustered)) return { groups: groups.length, merged: 0 };
 
   onProgress('Grouping events…');
-  let clusters;
-  try {
-    clusters = await clusterEvents(settings, groups);
-  } catch (e) {
-    return { groups: groups.length, merged: 0, error: e.message };
-  }
-
   const byId = new Map(groups.map((g) => [g.id, g]));
+  const sink = { toDelete: [], postUpdates: [], mergeJobs: [], merged: 0 };
 
-  let merged = 0;
-  const toPut = [];
-  const toDelete = [];
-  const postUpdates = [];
-  const mergeJobs = []; // survivors needing an LLM-merged description
+  // Pass 1 — deterministic union-find: same date (±1) AND a matching name OR
+  // venue key (Latin/CJK, exact after normalization). Robustly collapses the
+  // duplicates the model misses (identical names in either script; the same
+  // venue across transliterations even when the names differ).
+  applyClusters(deterministicClusters(groups), byId, postsById, sink);
 
-  for (const c of clusters) {
-    const members = c.memberIds.map((id) => byId.get(id)).filter(Boolean);
-    if (!members.length) continue;
-    const survivor = pickSurvivor(members);
-    const others = members.filter((g) => g.id !== survivor.id);
-
-    survivor.name = c.name || survivor.name;
-    survivor.venue = c.venue ?? survivor.venue;
-    survivor.time = c.time ?? survivor.time;
-    survivor.date = c.date || survivor.date;
-    survivor.end_date = c.end_date || survivor.end_date || c.date || survivor.date;
-    survivor.status = c.status || survivor.status;
-    survivor.post_ids = [...new Set(members.flatMap((g) => g.post_ids))];
-    survivor.flag = mergeFlag(members);
-    survivor.clustered = true; // this pass has evaluated it; skip it next time
-    survivor.updated_at = Date.now();
-
-    if (others.length) {
-      merged += others.length;
-      for (const pid of survivor.post_ids) {
-        postUpdates.push({ id: pid, field: 'event_group_id', value: survivor.id });
-      }
-      for (const g of others) toDelete.push(g.id);
-      const summaries = survivor.post_ids.map((pid) => postsById.get(pid)?.summary).filter(Boolean);
-      mergeJobs.push({ survivor, summaries });
+  // Pass 2 — LLM for the genuinely fuzzy cases (paraphrased names/venues), on the
+  // remaining survivors. clusterEvents returns every input in exactly one cluster,
+  // so this also marks leftover singletons evaluated.
+  let error = null;
+  const survivors = [...byId.values()];
+  if (survivors.length >= 2) {
+    try {
+      applyClusters(await clusterEvents(settings, survivors), byId, postsById, sink);
+    } catch (e) {
+      error = e.message; // keep the deterministic merges; report the LLM failure
     }
-    toPut.push(survivor);
+  }
+  // Anything neither pass touched (a lone singleton) is now evaluated too.
+  for (const g of byId.values()) {
+    if (!g.clustered) {
+      g.clustered = true;
+      g.updated_at = Date.now();
+    }
   }
 
-  // Persist the merged STRUCTURE first (post links, deletes, canonical fields) so
-  // an interruption mid-description can't orphan posts; then fetch descriptions
-  // concurrently WITH progress (a big first-pass backfill otherwise looks hung).
-  if (postUpdates.length) await applyFieldUpdates(postUpdates);
-  if (toDelete.length) await deleteEvents(toDelete);
-  if (toPut.length) await putEvents(toPut);
+  // Persist the merged STRUCTURE first (post links, deletes, canonical fields +
+  // clustered flags) so an interruption mid-description can't orphan posts.
+  if (sink.postUpdates.length) await applyFieldUpdates(sink.postUpdates);
+  if (sink.toDelete.length) await deleteEvents(sink.toDelete);
+  await putEvents([...byId.values()]);
 
+  // One LLM-merged description per merged survivor (deduped across both passes),
+  // fetched concurrently WITH progress (a big first-pass backfill otherwise looks
+  // hung).
+  const jobs = [...new Map(sink.mergeJobs.map((j) => [j.survivor.id, j])).values()];
   let done = 0;
-  const queue = [...mergeJobs];
+  const queue = [...jobs];
   const workers = Array.from({ length: 3 }, async () => {
     while (queue.length > 0) {
       const { survivor, summaries } = queue.shift();
-      onProgress(`Merging events… (${(done += 1)}/${mergeJobs.length})`);
+      onProgress(`Merging events… (${(done += 1)}/${jobs.length})`);
       try {
         survivor.description = await mergeEventDescription(settings, survivor.name, summaries);
       } catch (e) {
@@ -271,25 +259,129 @@ async function groupEvents(settings, accountId, onProgress) {
     }
   });
   await Promise.all(workers);
+  if (jobs.length) await putEvents(jobs.map((j) => j.survivor)); // persist descriptions
 
-  const described = mergeJobs.map((j) => j.survivor);
-  if (described.length) await putEvents(described); // persist the merged descriptions
-  return { groups: groups.length, merged };
+  return { groups: byId.size, merged: sink.merged, ...(error ? { error } : {}) };
 }
 
-// Keep a member that carries a user flag so pins/hides survive a merge.
+// Which record survives a merge. Prefer a pinned member (keep the pin), then any
+// UNHIDDEN member, then the first — matching the flag priority below.
 function pickSurvivor(members) {
   return (
     members.find((g) => g.flag === 'pinned') ||
-    members.find((g) => g.flag === 'hidden') ||
+    members.find((g) => (g.flag ?? null) === null) ||
     members[0]
   );
 }
+// Flag of the merged group: pinned wins, then UNHIDDEN wins over hidden — a group
+// is only hidden when EVERY member was hidden (so hiding some but not all
+// duplicates leaves the merge visible).
 function mergeFlag(members) {
   if (members.some((g) => g.flag === 'pinned')) return 'pinned';
-  if (members.some((g) => g.flag === 'hidden')) return 'hidden';
-  return null;
+  if (members.some((g) => (g.flag ?? null) === null)) return null;
+  return 'hidden';
 }
+// --- Deterministic duplicate detection --------------------------------------
+// Normalize a name/venue into two comparable keys: a Latin key (lowercased,
+// diacritics/macrons stripped, non-alphanumerics removed → "Zōjō-ji" == "Zojoji")
+// and a CJK key (ideographs + kana only). We match on EXACT key equality, never
+// substrings, so it stays safe.
+function keyLatin(s) {
+  return String(s || '')
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '') // combining diacritics (incl. macrons)
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '');
+}
+function keyCjk(s) {
+  return (String(s || '').match(/[\u3040-\u30ff\u3400-\u9fff\uf900-\ufaff]+/g) || []).join('');
+}
+const eqKey = (x, y) => !!x && x === y;
+const hasVenue = (g) => !!(keyLatin(g.venue) || keyCjk(g.venue));
+
+// Two groups are the SAME real-world event when they share the EXACT start date
+// AND either their venue keys match (same place, names may differ — the Zōjōji
+// case) OR their name keys match with a compatible venue (same event, one venue
+// missing — the Marunouchi case; requiring venue-compatibility guards two
+// generically-named events at DIFFERENT venues). We deliberately require the SAME
+// start date rather than ±1: with union-find, ±1 would chain a venue's events
+// across consecutive days into one mega-cluster. The ±1 fuzziness (and merging a
+// multi-day event's "day 2" post) is left to the LLM pass, which won't chain.
+function sameEvent(a, b) {
+  if (!a.date || a.date !== b.date) return false;
+  const venueMatch =
+    eqKey(keyLatin(a.venue), keyLatin(b.venue)) || eqKey(keyCjk(a.venue), keyCjk(b.venue));
+  if (venueMatch) return true;
+  const nameMatch =
+    eqKey(keyLatin(a.name), keyLatin(b.name)) || eqKey(keyCjk(a.name), keyCjk(b.name));
+  return nameMatch && (!hasVenue(a) || !hasVenue(b));
+}
+
+// Union-find over the groups → clusters (as {memberIds}) of size > 1. Transitive,
+// so A↔B (same venue kanji) and B↔C (same venue romaji) collapse A,B,C together.
+function deterministicClusters(groups) {
+  const parent = groups.map((_, i) => i);
+  const find = (x) => {
+    while (parent[x] !== x) x = parent[x] = parent[parent[x]];
+    return x;
+  };
+  for (let i = 0; i < groups.length; i++) {
+    for (let j = i + 1; j < groups.length; j++) {
+      if (sameEvent(groups[i], groups[j])) parent[find(i)] = find(j);
+    }
+  }
+  const byRoot = new Map();
+  groups.forEach((g, i) => {
+    const r = find(i);
+    (byRoot.get(r) || byRoot.set(r, []).get(r)).push(g);
+  });
+  return [...byRoot.values()]
+    .filter((m) => m.length > 1)
+    .map((m) => ({ memberIds: m.map((g) => g.id) }));
+}
+
+// Apply a list of clusters to the in-memory group map: pick a survivor, fold the
+// others into it (union post_ids, flag priority), and record the side effects.
+// Deterministic clusters carry only memberIds (survivor keeps its own fields);
+// LLM clusters also carry canonical name/venue/date/... which then win.
+function applyClusters(clusters, byId, postsById, sink) {
+  for (const c of clusters) {
+    const members = (c.memberIds || []).map((id) => byId.get(id)).filter(Boolean);
+    if (!members.length) continue;
+    const survivor = pickSurvivor(members);
+    const others = members.filter((g) => g.id !== survivor.id);
+    // Widest end date across members so a multi-day event stays "current" (and
+    // isn't collapsed to a single day by whichever member became the survivor).
+    const widestEnd = members
+      .map((g) => g.end_date || g.date)
+      .filter(Boolean)
+      .sort()
+      .pop();
+    if (c.name) survivor.name = c.name;
+    if (c.venue !== undefined) survivor.venue = c.venue ?? survivor.venue;
+    if (c.time !== undefined) survivor.time = c.time ?? survivor.time;
+    if (c.date) survivor.date = c.date;
+    survivor.end_date = c.end_date || widestEnd || survivor.date;
+    if (c.status) survivor.status = c.status;
+    survivor.post_ids = [...new Set(members.flatMap((g) => g.post_ids || []))];
+    survivor.flag = mergeFlag(members);
+    survivor.clustered = true;
+    survivor.updated_at = Date.now();
+    if (others.length) {
+      sink.merged += others.length;
+      for (const pid of survivor.post_ids) {
+        sink.postUpdates.push({ id: pid, field: 'event_group_id', value: survivor.id });
+      }
+      for (const g of others) {
+        sink.toDelete.push(g.id);
+        byId.delete(g.id);
+      }
+      const summaries = survivor.post_ids.map((pid) => postsById.get(pid)?.summary).filter(Boolean);
+      sink.mergeJobs.push({ survivor, summaries });
+    }
+  }
+}
+
 function isoDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
