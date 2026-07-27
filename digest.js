@@ -163,8 +163,11 @@ function pushUndo(label, changes) {
 function updateUndoBtn() {
   const last = undoStack[undoStack.length - 1];
   undoBtn.hidden = !last;
-  if (last) undoBtn.title = `Undo: ${last.label} (${last.changes.length}) — Ctrl/⌘+Z`;
+  // Labels are self-describing (they carry the count and HOW the action was
+  // done), so the tooltip says exactly what will be reverted.
+  if (last) undoBtn.title = `Undo: ${last.label} — Ctrl/⌘+Z`;
 }
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
 async function undoLast() {
   const entry = undoStack.pop();
   if (!entry) return;
@@ -516,9 +519,18 @@ function updateStats() {
   const timeline = all.filter((t) => !t.nested && mine(t));
   const unread = timeline.filter((t) => !t.read).length;
   const pending = timeline.filter((t) => !t.processed_at).length;
-  statsEl.textContent =
-    `${timeline.length} posts · ${unread} unread` +
-    (pending > 0 ? ` · ${pending} to analyze` : '');
+  // The unread count is right-clickable: "Mark unread from date/time…".
+  statsEl.textContent = '';
+  statsEl.appendChild(document.createTextNode(`${timeline.length} posts · `));
+  const unreadEl = document.createElement('span');
+  unreadEl.className = 'unread-stat';
+  unreadEl.textContent = `${unread} unread`;
+  unreadEl.title = 'Right-click to mark posts unread from a date/time';
+  unreadEl.addEventListener('contextmenu', unreadMenu);
+  statsEl.appendChild(unreadEl);
+  if (pending > 0) {
+    statsEl.appendChild(document.createTextNode(` · ${pending} to analyze`));
+  }
   const analyzeBtn = document.getElementById('analyze');
   if (analyzeBtn) {
     analyzeBtn.textContent = pending > 0 ? `✨ Analyze (${pending})` : '✨ Analyze';
@@ -765,7 +777,8 @@ function flagBtn(g, flag, icon, title) {
     const next = active ? null : flag;
     await setEventFlag(g.id, next);
     g.flag = next;
-    const label = next === 'pinned' ? 'pin event' : next === 'hidden' ? 'hide event' : 'unflag event';
+    const verb = next === 'pinned' ? 'pin' : next === 'hidden' ? 'hide' : 'unflag';
+    const label = `${verb} event "${g.name}"`;
     pushUndo(label, [{ store: 'events', id: g.id, field: 'flag', value: prev }]);
     renderEvents();
   });
@@ -1201,7 +1214,9 @@ function readCheck(t) {
     e.stopPropagation(); // don't expand a collapsed row
     const prev = t.read ? 1 : 0;
     await toggleRead(t.id);
-    pushUndo(prev ? 'mark unread' : 'mark read', [{ id: t.id, field: 'read', value: prev }]);
+    pushUndo(prev ? 'mark this post unread' : 'mark this post read', [
+      { id: t.id, field: 'read', value: prev },
+    ]);
     await load();
   });
   check.addEventListener('contextmenu', (e) => {
@@ -1213,7 +1228,7 @@ function readCheck(t) {
         onClick: async () => {
           const ids = await markReadUpTo(t.created_at, selectedAccount);
           pushUndo(
-            `mark ${ids.length} read`,
+            `mark ${plural(ids.length, 'post')} read up to ${fmtTime(t.created_at)}`,
             ids.map((id) => ({ id, field: 'read', value: 0 })),
           );
           await load();
@@ -1592,12 +1607,21 @@ async function syncMenu(x, y) {
     { label: '🔄 Sync back 24 hours', onClick: () => startSync(now - day) },
     { label: '🔄 Sync back 3 days', onClick: () => startSync(now - 3 * day) },
     { label: '🔄 Sync back 7 days', onClick: () => startSync(now - 7 * day) },
-    { label: '⏱ Sync back to date/time…', onClick: () => syncDatePicker(x, y, boundary) },
+    {
+      label: '⏱ Sync back to date/time…',
+      onClick: () => datePickerPopover(x, y, boundary, 'Sync from here', startSync),
+    },
   ]);
 }
 
 // Small popover with a datetime-local input (interpreted in local time, as X does).
-function syncDatePicker(x, y, defaultTs) {
+/**
+ * Anchored popover with a datetime-local input and one action button, shared by
+ * "Sync back to date/time…" and "Mark unread from date/time…" so both read the
+ * same. `onPick(ts)` gets the chosen timestamp (local time); it isn't called if
+ * the field is left empty/invalid.
+ */
+function datePickerPopover(x, y, defaultTs, actionLabel, onPick) {
   hideContextMenu();
   const box = document.createElement('div');
   box.className = 'ctx-menu date-pop';
@@ -1606,18 +1630,17 @@ function syncDatePicker(x, y, defaultTs) {
 
   const input = document.createElement('input');
   input.type = 'datetime-local';
-  // Default to the sync boundary (falls back to 1 day ago if somehow unset).
-  const d = new Date(defaultTs || Date.now() - 86400000);
+  const d = new Date(defaultTs || Date.now() - 86400000); // fallback: 1 day ago
   const pad = (n) => String(n).padStart(2, '0');
   input.value = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 
   const go = document.createElement('button');
   go.className = 'btn';
-  go.textContent = 'Sync from here';
+  go.textContent = actionLabel;
   go.addEventListener('click', () => {
     const ts = input.value ? new Date(input.value).getTime() : NaN;
     box.remove();
-    if (!Number.isNaN(ts)) startSync(ts);
+    if (!Number.isNaN(ts)) onPick(ts);
   });
 
   box.append(input, go);
@@ -1701,7 +1724,7 @@ searchEl.addEventListener('contextmenu', (e) => {
         const ids = unread.map((t) => t.id);
         await applyFieldUpdates(ids.map((id) => ({ id, field: 'read', value: 1 })));
         pushUndo(
-          `mark ${n} read`,
+          `mark ${plural(n, 'post')} read matching "${searchEl.value.trim()}"`,
           ids.map((id) => ({ id, field: 'read', value: 0 })),
         );
         await load();
@@ -1786,16 +1809,32 @@ document.getElementById('analyze').addEventListener('contextmenu', (e) => {
 document.getElementById('open-settings').addEventListener('click', () => {
   chrome.runtime.openOptionsPage();
 });
-document.getElementById('unread-since-btn').addEventListener('click', async () => {
-  const value = document.getElementById('unread-since').value;
-  if (!value) return;
-  const ts = new Date(value).getTime();
-  if (Number.isNaN(ts)) return;
+// Right-click the unread count -> mark posts unread from a chosen date/time,
+// using the same picker as "Sync back to date/time…".
+function unreadMenu(e) {
+  e.preventDefault();
+  e.stopPropagation();
+  const { clientX: x, clientY: y } = e;
+  showContextMenu(x, y, [
+    {
+      label: '⏱ Mark unread from date/time…',
+      // Defaults to now — you typically walk the picker back from the present.
+      onClick: () => datePickerPopover(x, y, Date.now(), 'Mark unread', markUnreadFrom),
+    },
+  ]);
+}
+
+async function markUnreadFrom(ts) {
+  // markUnreadSince returns ONLY the posts it actually flipped read -> unread,
+  // so undo restores exactly those and never touches posts already unread.
   const ids = await markUnreadSince(ts, selectedAccount);
-  pushUndo(`mark ${ids.length} unread`, ids.map((id) => ({ id, field: 'read', value: 1 })));
+  pushUndo(
+    `mark ${plural(ids.length, 'post')} unread from ${fmtTime(ts)}`,
+    ids.map((id) => ({ id, field: 'read', value: 1 })),
+  );
   pipelineStatusEl.textContent = `${ids.length} posts marked unread.`;
   await load();
-});
+}
 
 undoBtn.addEventListener('click', undoLast);
 document.addEventListener('keydown', (e) => {

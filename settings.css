@@ -34,6 +34,19 @@ textarea { resize: vertical; }
 .row { display: flex; gap: 8px; }
 .row input { flex: 1; }
 .hint { font-size: 12px; color: #7a7a72; margin: 4px 0 0; }
+
+/* Right-click reference table */
+.shortcuts { width: 100%; border-collapse: collapse; margin: 10px 0 4px; font-size: 13px; }
+.shortcuts th, .shortcuts td {
+  text-align: left;
+  vertical-align: top;
+  padding: 7px 12px 7px 0;
+  border-top: 1px solid #e3e1d9;
+}
+.shortcuts tr:first-child th, .shortcuts tr:first-child td { border-top: none; }
+.shortcuts th { font-weight: 600; white-space: nowrap; width: 1%; color: #1b2a4a; }
+.shortcuts td { color: #4a4a44; }
+.shortcuts .muted { color: #7a7a72; font-weight: 400; }
 .btn {
   padding: 8px 14px;
   border: 1px solid #cfcabd;

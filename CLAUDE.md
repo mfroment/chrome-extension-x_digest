@@ -245,6 +245,29 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Mark-unread via right-click + undo labels + shortcut help (v0.10.9)
+
+- The inline "Mark unread from [date] [Apply]" control is GONE from the subbar.
+  It now lives behind a right-click on the **unread count** in the header
+  (`.unread-stat`, dotted-underline affordance) → "⏱ Mark unread from date/time…".
+- `syncDatePicker` was generalized into `datePickerPopover(x, y, defaultTs,
+  actionLabel, onPick)`, shared by "Sync back to date/time…" and mark-unread, so
+  both time-travel prompts are literally the same component.
+- Undo semantics were already right and are unchanged: `markUnreadSince` cursors
+  the `read` index at 1, so it only flips posts that were READ and returns just
+  those ids — undo restores exactly them, never touching already-unread posts.
+- Undo LABELS are now self-describing (they carry the count AND how the action was
+  done), because several actions used to render identically as "mark N read":
+  `mark 42 posts read up to 27/07 10:06`, `mark 12 posts read matching "@handle"`,
+  `mark 30 posts unread from 26/07 08:00`, `pin event "…"`. `updateUndoBtn` drops
+  its old "(N)" suffix since the label carries it.
+- Undo covers ONLY read-state changes and event flags (5 `pushUndo` sites).
+  Sync / Analyze / Refresh deliberately have none.
+- Settings gained a **"Right-click shortcuts"** section: a table of every
+  right-click affordance (author, 🔁 reposter, ✓ read check, search box, unread
+  count, ✨ Analyze, 🔄 Sync, event source links). Keep it in sync when adding a
+  new context menu.
+
 ## Standalone-reply indication (v0.10.7)
 
 X routinely surfaces replies as top-level timeline posts; those now read as

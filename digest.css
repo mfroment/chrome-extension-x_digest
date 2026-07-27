@@ -58,6 +58,14 @@ html, body {
 }
 
 .stats { font-size: 13px; opacity: 0.75; }
+/* The unread count is right-clickable ("Mark unread from date/time…") — hint it
+   with a dotted underline rather than a loud control. */
+.stats .unread-stat {
+  cursor: context-menu;
+  text-decoration: underline dotted rgba(255, 255, 255, 0.4);
+  text-underline-offset: 3px;
+}
+.stats .unread-stat:hover { text-decoration-color: rgba(255, 255, 255, 0.9); }
 
 /* thin white divider between brand items (title | account | count) */
 .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.35); flex: 0 0 auto; }
