@@ -245,6 +245,22 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Translation Markdown rendering (v0.10.5)
+
+Translations were stored/shown as raw text, so the Markdown the model emits
+(`#`/`##` headings, `**bold**`, `-` bullets, `---` rules — e.g. the per-image
+transcription section) appeared literally. `renderMarkdownInto()` (digest.js) now
+renders a lightweight, XSS-SAFE subset into the `.llm-translation` box: all text
+goes in via `textContent`/`createTextNode` — never `innerHTML` — so nothing in
+the model output can inject markup. Headings require the `# ` space, so
+`#hashtags` stay plain text. Fixes existing translations too (render-time, no
+re-translate needed). CSS: `.md-h`/`.md-p`/`.md-ul`/`hr` under `.llm-translation`
+(pre-wrap dropped — blocks handle layout).
+- Emoji handling: the translate prompt now says to copy emojis verbatim (don't
+  replace an emoji with a word/description), and the renderer strips stray U+FFFD
+  `�` (a model occasionally emits one for a mangled emoji). Existing translations
+  lose the `�` at render; the emoji itself returns on a re-translate.
+
 ## Browse-refresh + reposter filter + mark-filtered-read (v0.10.4)
 
 - **#1 Refresh-on-browse:** counts + liked-state now refresh for a post viewed

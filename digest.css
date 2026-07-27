@@ -549,14 +549,20 @@ a.action { text-decoration: none; }
 .llm-event.warn { background: var(--lantern-soft); color: var(--lantern); }
 .llm-translation {
   font-size: 14px;
-  white-space: pre-wrap;
   border-left: 3px solid var(--ink-soft);
-  padding: 4px 10px;
+  padding: 6px 10px;
   margin-top: 8px;
   color: var(--ink);
   background: var(--paper);
   border-radius: 0 6px 6px 0;
 }
+.llm-translation .md-h { font-weight: 700; margin: 8px 0 3px; }
+.llm-translation .md-h:first-child { margin-top: 0; }
+.llm-translation .md-p { margin: 4px 0; }
+.llm-translation .md-ul { margin: 3px 0; padding-left: 18px; }
+.llm-translation .md-ul li { margin: 1px 0; }
+.llm-translation strong { font-weight: 700; }
+.llm-translation hr { border: none; border-top: 1px solid var(--line); margin: 8px 0; }
 
 .chip {
   font-size: 11.5px;

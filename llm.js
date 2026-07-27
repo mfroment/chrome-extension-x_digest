@@ -266,8 +266,9 @@ export async function translatePost(settings, post) {
   const system =
     `Translate the X post into ${settings.language}, faithfully and completely. ` +
     'Keep proper nouns with their original writing plus a translation/reading in parentheses ' +
-    'when helpful. If images are attached and contain text (flyers, posters, schedules), ' +
-    'add a section transcribing their key information in the target language.';
+    'when helpful. Copy any emoji from the original exactly as-is; never replace an emoji ' +
+    'with a word or description. If images are attached and contain text (flyers, posters, ' +
+    'schedules), add a section transcribing their key information in the target language.';
 
   const content = [];
   for (const url of (post.images || []).slice(0, 4)) {

@@ -937,6 +937,58 @@ function replyControl(t, content) {
   return btn;
 }
 
+// Lightweight, XSS-safe Markdown renderer for LLM translations (headings, bold,
+// bullet lists, rules). All text goes in via textContent — never innerHTML — so
+// nothing in the model output can inject markup. Anything it doesn't recognize
+// (incl. #hashtags, which lack the "# " space) renders as plain text.
+function appendInline(el, text) {
+  for (const part of String(text).split(/(\*\*[^*]+\*\*)/g)) {
+    if (/^\*\*[^*]+\*\*$/.test(part)) {
+      const s = document.createElement('strong');
+      s.textContent = part.slice(2, -2);
+      el.appendChild(s);
+    } else if (part) {
+      el.appendChild(document.createTextNode(part));
+    }
+  }
+}
+function renderMarkdownInto(container, md) {
+  let list = null;
+  // Drop stray U+FFFD replacement chars (a model occasionally emits one for an
+  // emoji it mangled) so they don't show as "�".
+  for (const raw of String(md || '').replace(/�/g, '').split('\n')) {
+    const line = raw.replace(/\s+$/, '');
+    const heading = line.match(/^(#{1,6})\s+(.*)$/); // "# " (a hashtag has no space)
+    const bullet = line.match(/^\s*[-*]\s+(.*)$/);
+    if (bullet) {
+      if (!list) {
+        list = document.createElement('ul');
+        list.className = 'md-ul';
+        container.appendChild(list);
+      }
+      const li = document.createElement('li');
+      appendInline(li, bullet[1]);
+      list.appendChild(li);
+      continue;
+    }
+    list = null;
+    if (heading) {
+      const el = document.createElement('div');
+      el.className = 'md-h';
+      appendInline(el, heading[2]);
+      container.appendChild(el);
+    } else if (/^\s*---+\s*$/.test(line)) {
+      container.appendChild(document.createElement('hr'));
+    } else if (line.trim() !== '') {
+      const p = document.createElement('div');
+      p.className = 'md-p';
+      appendInline(p, line);
+      container.appendChild(p);
+    }
+    // blank line -> paragraph gap via block margins
+  }
+}
+
 function postCard(t, depth = 0) {
   // For a repost, show the original's content if we captured it
   const orig = t.repost_of ? byId.get(t.repost_of) : null;
@@ -1001,11 +1053,11 @@ function postCard(t, depth = 0) {
   textEl.innerHTML = richText(content);
   card.appendChild(textEl);
 
-  // Translation block (if already fetched)
+  // Translation block (if already fetched) — rendered as lightweight Markdown.
   if (t.translation) {
     const trEl = document.createElement('div');
     trEl.className = 'llm-translation';
-    trEl.textContent = t.translation;
+    renderMarkdownInto(trEl, t.translation);
     card.appendChild(trEl);
   }
 
