@@ -318,15 +318,24 @@ re-translate needed). CSS: `.md-h`/`.md-p`/`.md-ul`/`hr` under `.llm-translation
 `pipeline.groupEvents` now runs a DETERMINISTIC merge pass before the LLM, so the
 obvious duplicates the model misses are collapsed reliably.
 - `deterministicClusters`: union-find over the account's upcoming event groups.
-  Two groups are the same event when start dates are within ±1 day AND either
-  their VENUE keys match (same place, names may differ — the Zōjōji case) OR their
-  NAME keys match with a COMPATIBLE venue (same event, one venue missing — the
-  Marunouchi case; requiring venue-compatibility guards two generically-named
-  events at different venues). Keys are normalized into a Latin key (diacritics/
-  macrons stripped, non-alphanumerics removed → "Zōjō-ji"=="Zojoji") and a CJK key
-  (kana + ideographs); matching is EXACT, never substrings. Transitive, so the
-  three Zōjōji entries chain via kanji `増上寺` and romaji `zojoji` even when no
-  single pair shares both scripts.
+  Two groups are the same event when they share the EXACT start date AND either
+  their VENUE keys match (same place, names worded differently) OR their NAME keys
+  match with a COMPATIBLE venue (same event, one entry missing the venue).
+  Requiring venue-compatibility for a name-only match guards two generically-named
+  events at different venues.
+  - Keys are normalized twice: a Latin key (diacritics/macrons stripped,
+    non-alphanumerics removed, so a macron'd romanization equals its plain form)
+    and a CJK key (kana + ideographs). Matching is EXACT, never substrings.
+  - Transitive, so three entries chain together when one pair shares the CJK
+    spelling and another shares the romanization, even though no single pair
+    matches in both scripts.
+  - Deliberately EXACT-date, not ±1: with union-find, a ±1 window chains a venue's
+    events across consecutive days into one mega-cluster (this regressed once —
+    events "vanished" because they were folded into a single group). The ±1
+    fuzziness and multi-day "day 2" posts are left to the LLM pass, which reasons
+    instead of chaining.
+  - Merging keeps the WIDEST `end_date` across members, so a multi-day event isn't
+    collapsed onto a single day (and so stays "current" until it really ends).
 - Shared `applyClusters(clusters, byId, postsById, sink)` is used by BOTH the
   deterministic pass and the LLM pass (the LLM handles the genuinely fuzzy/
   paraphrased cases on the survivors). Deterministic clusters carry only
@@ -335,10 +344,10 @@ obvious duplicates the model misses are collapsed reliably.
 - Flag priority on merge (`mergeFlag`/`pickSurvivor`): pinned > UNHIDDEN > hidden
   — a merged group is hidden ONLY if every member was hidden, so hiding some but
   not all duplicates leaves the result visible.
-- `llm.clusterEvents` prompt tightened: same date + same venue (across
-  transliterations/scripts, or a "Temple"/"Shrine"/"Hall" suffix) = the same event
-  even when names differ; keep two entries separate ONLY when name AND venue both
-  differ.
+- `llm.clusterEvents` prompt tightened: same date + same venue (across scripts and
+  transliterations, or a venue-type word like "Hall"/"Park" added or dropped) =
+  the same event even when names differ; keep two entries separate ONLY when name
+  AND venue both differ.
 - Reprocess EXISTING duplicates via right-click ✨ Analyze → "Re-analyze event
   posts only" (clears `event_group_id` → fresh singletons → both passes re-run).
   The `clustered` short-circuit is unchanged, so a normal Analyze still spends a
@@ -488,7 +497,7 @@ Clicking the 💬 on a post expands its **captured** replies inline, recursively
   `pipeline.js`); `threadOpen` persists across the reload so it stays open.
 - Reposts deliberately excluded (their wrapper id has no captured children).
 
-## Current state — step 2 built (v0.2), NOT yet validated with live API calls
+## Step 2 reference (LLM pipeline) — built v0.2, live-validated since
 
 Step 2 files (all vanilla JS ES modules, no build step):
 - `settings.html/css/js` + `defaults.js` — options page: API key, model
@@ -524,9 +533,11 @@ Step 2 files (all vanilla JS ES modules, no build step):
   per-post Translate button; "Mark unread from <datetime>" control (marks
   everything newer than the timestamp unread).
 
-Immediate next task: validate step 2 live (real API key, real captured posts),
-check classification quality against the theme descriptions, extraction quality
-on real flyers, and tune batch sizes / prompts as needed.
+Live-validated (real API key, real captured posts): classification against the
+configured themes, one-line summaries, event extraction with image reading, and
+clustering all run in daily use. Prompt/threshold tuning is ongoing rather than a
+one-off task — recent examples: the v0.10.3 deterministic merge rules and the
+v0.10.5 "copy emojis verbatim" translate rule.
 
 ## Step 1 (v0.1) reference
 
@@ -570,25 +581,33 @@ on real flyers, and tune batch sizes / prompts as needed.
       oldest-first reading order, mark-unread-since-timestamp
 - [x] Multi-account opt-in (v0.3, 2026-07-13): per-account digest enablement +
       criteria, account-tagged captures, scoped digest/badge/pipeline
-- [ ] Validate step 2 live (real API key + captured posts); tune prompts,
-      batch sizes, theme descriptions based on classification quality
+- [x] Validate step 2 live — done: the pipeline has run against real captured
+      posts with a real API key (classification, summaries, event extraction with
+      image reading, clustering). Prompt/threshold tuning stays ongoing as output
+      quality issues surface (e.g. the v0.10.3 merge rules, v0.10.5 emoji rule)
 - [x] Like-from-digest (v0.4, 2026-07-14): ♥ button on cards, FavoriteTweet
       via session cookies + captured bearer, active-account safety check
 - [x] Step 3 remainder (v0.7.0): Sync auto-scroll, stopping on a created_at
       frontier (sortIndex investigated + dropped as session-dependent)
-- [~] Stale like/count refresh — DECIDED AGAINST (2026-07-18, user: "I can live
-      with stale likes"). Auto-refresh-on-scroll is automated view-triggered
-      polling = highest ToS risk vs our human-paced posture; counts already
-      refresh for free when posts reappear via Sync/browse (`putPosts` merges
-      favorite_count, not a PROTECTED_FIELD); and a single-tweet read may hit the
-      same x-client-transaction-id 404 that killed bookmarks. Only defensible
-      revisit: a per-post ↻ button (one request per human click, 5-min guard),
-      validate the read works first. See BACKLOG.md.
+- [x] Stale like/count refresh (v0.10.2 + v0.10.4, 2026-07-27) — first declined
+      2026-07-18 as refresh-on-scroll (extra API calls = automated view-triggered
+      polling, our highest ToS risk), then SOLVED DIFFERENTLY with no extra
+      requests: passive native-like capture + refresh-on-browse for posts already
+      in the digest. Rule to keep: parse X's own traffic only, never add requests
+      or scrape the DOM. See BACKLOG.md §4.
 - [ ] Later ideas: timestamp-based lookup of posts (snowflake IDs encode creation
       time)
 - [x] Generalization + privacy pass (v0.10.0, 2026-07-19): neutral default
       themes, browser-locale default output language, subject-neutral prompts/docs,
       and de-branding of internal identifiers (runtime message types now `XD_*`,
       IndexedDB named `x-digest`). Existing configs and captured posts preserved.
+- [x] Event-merge robustness + past-events view (v0.10.3): deterministic
+      same-event merge (name/venue keys, Latin+CJK, union-find) before the LLM
+      pass; unhidden-wins flag priority; Events tab lists past events (folded by
+      date, staggered "show older") when "Unhidden only" is off
+- [x] Digest UX pass (v0.10.1, v0.10.5–v0.10.7): Events→Timeline jump with scroll
+      anchoring + per-tab scroll memory; Markdown-rendered translations (XSS-safe)
+      + emoji handling; reposter shown on collapsed reposts; standalone replies
+      indented with a ↳ gutter arrow (click → parent); uniform 10px post spacing
 - [ ] Deferred work + scaling concerns tracked in `BACKLOG.md` (HIGH: whole-DB-
       in-memory has a ~months horizon at ~500 posts/day → windowed data loading)

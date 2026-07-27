@@ -283,9 +283,9 @@ function mergeFlag(members) {
 }
 // --- Deterministic duplicate detection --------------------------------------
 // Normalize a name/venue into two comparable keys: a Latin key (lowercased,
-// diacritics/macrons stripped, non-alphanumerics removed → "Zōjō-ji" == "Zojoji")
-// and a CJK key (ideographs + kana only). We match on EXACT key equality, never
-// substrings, so it stays safe.
+// diacritics/macrons stripped, non-alphanumerics removed, so a macron'd or
+// hyphenated romanization equals its plain spelling) and a CJK key (ideographs +
+// kana only). We match on EXACT key equality, never substrings, so it stays safe.
 function keyLatin(s) {
   return String(s || '')
     .normalize('NFKD')
@@ -300,10 +300,10 @@ const eqKey = (x, y) => !!x && x === y;
 const hasVenue = (g) => !!(keyLatin(g.venue) || keyCjk(g.venue));
 
 // Two groups are the SAME real-world event when they share the EXACT start date
-// AND either their venue keys match (same place, names may differ — the Zōjōji
-// case) OR their name keys match with a compatible venue (same event, one venue
-// missing — the Marunouchi case; requiring venue-compatibility guards two
-// generically-named events at DIFFERENT venues). We deliberately require the SAME
+// AND either their venue keys match (same place, names worded differently) OR
+// their name keys match with a compatible venue (same event, one entry omitting
+// the venue; requiring venue-compatibility guards two generically-named events at
+// DIFFERENT venues). We deliberately require the SAME
 // start date rather than ±1: with union-find, ±1 would chain a venue's events
 // across consecutive days into one mega-cluster. The ±1 fuzziness (and merging a
 // multi-day event's "day 2" post) is left to the LLM pass, which won't chain.
@@ -318,7 +318,8 @@ function sameEvent(a, b) {
 }
 
 // Union-find over the groups → clusters (as {memberIds}) of size > 1. Transitive,
-// so A↔B (same venue kanji) and B↔C (same venue romaji) collapse A,B,C together.
+// so A↔B (matching on the CJK key) and B↔C (matching on the Latin key) collapse
+// A, B and C together even though no single pair matches in both scripts.
 function deterministicClusters(groups) {
   const parent = groups.map((_, i) => i);
   const find = (x) => {

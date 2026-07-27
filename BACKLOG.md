@@ -50,22 +50,28 @@ refactor, data export/import — see CLAUDE.md.)
   DOM-dependent seams (`cellInnerDiv`, tab-position clicking, the Sync stop
   logic) are not — they'd need a headless-browser harness.
 
-## 4. Decided AGAINST (kept here so we don't re-open it by accident)
+## 4. Stale like/counts — RESOLVED (differently) in v0.10.2 / v0.10.4
 
-- **Refresh stale like/reply/repost counts on scroll-into-view** (raised
-  2026-07-18, declined — user: "I can live with stale likes"). Reasons:
-  1. Auto-refresh-as-posts-scroll is **automated, view-triggered polling** — the
-     browser (not a human) decides to hit X. That's the highest-ToS-risk category
-     vs. our standing posture (human-paced, low-volume, on-demand, no background
-     polling); a long read session could fire hundreds of `TweetResultByRestId`
-     reads even with a 5-min-per-post limiter. Reads more like scraping than a
-     human clicking ♥.
-  2. **Counts already refresh for free, ToS-safely**: whenever a post reappears
-     in a captured timeline (Sync or normal browsing), `putPosts` merges the
-     fresh `favorite_count`/reply/repost counts — they are NOT PROTECTED_FIELDS.
-  3. **May not even work**: a single-tweet read could be gated behind the same
-     `x-client-transaction-id` signed header that killed the bookmark feature
-     (likes slipped through; reads might not).
-  Only defensible revisit if ever wanted: a **per-post ↻ button** — one request
-  per human click (same posture as the like button), 5-min guard — and validate
-  the single-tweet read actually returns 200 before wiring it broadly.
+Originally declined on 2026-07-18 ("I can live with stale likes") because the
+proposal was **refresh-on-scroll via extra API calls** — automated, view-triggered
+polling, the highest-ToS-risk shape versus our human-paced posture, and possibly
+404-gated by the same `x-client-transaction-id` header that killed bookmarks.
+
+Revisited 2026-07-27 and solved **without any extra requests**, so the objection
+no longer applies:
+
+- **v0.10.2** — native like/unlike captured passively: the interceptor watches the
+  `FavoriteTweet`/`UnfavoriteTweet` mutation X itself sends on click, and reflects
+  `favorited` + an optimistic ±1 count. Liking a not-yet-stored post records it
+  (with its cached content); an unlike, or a like with no cached record, is
+  update-only.
+- **v0.10.4** — refresh-on-browse: `REFRESH_OPS` (detail page, profile, search,
+  list, bookmarks…) refresh counts/liked-state for posts **already in the digest**.
+  Update-only — never inserts, never re-tags accounts, never advances
+  `syncBoundary`.
+
+**The rule that made it acceptable, worth keeping for future requests: parse X's
+own traffic only — no extra API calls, no DOM scraping.** A per-post ↻ button
+(one request per human click) remains the only shape we'd consider if a true
+on-demand read were ever needed, and it would still need the single-post read
+validated first.

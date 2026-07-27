@@ -30,27 +30,38 @@ API (for the optional analysis).
 - **Timeline** tab: posts in reading order (oldest first by default), day
   separators, a red "you were here" line at the read/unread boundary, search
   (works in any language, CJK included), unread filter, "Read up to here",
-  per-post Translate.
-- **📅 Events** tab: upcoming events extracted from announcements, sorted by
-  date, kept until their date passes, cancelled/postponed badged.
+  per-post Translate (Markdown-rendered, reads attached images too).
+  Fully-read days fold under their date; replies shown as standalone posts are
+  indented with a ↳ arrow; captured replies expand inline from 💬.
+- **📅 Events** tab: events extracted from announcements and clustered so the
+  same event announced by several accounts collapses into one entry. Sorted by
+  date, multi-day ranges supported, cancelled/postponed badged, 📌 pin / 🙈 hide
+  per event. Turn "Unhidden only" off to browse past events (folded by date).
+- **🔄 Sync**: opens a fresh x.com tab and scrolls the Following timeline until
+  it reaches what you already have. Right-click it to sync further back.
 - Per-post **♥ like**, performed on X with your own session (human clicks only —
-  nothing automated).
+  nothing automated). Liking on x.com directly is picked up too, and counts
+  refresh for posts already in the digest as you browse — all by reading X's own
+  responses, never by making extra API calls.
+- **Undo** (Ctrl/⌘+Z) covers mark-read, "read up to here", and event pin/hide.
+  Right-click the search box while filtering to mark all matching posts read.
 - Themes are configured per X account in Settings, as natural-language
   descriptions of the topics you want. API key, model and output language are
-  shared across accounts.
+  shared across accounts. Settings also has JSON **Export / Import** for backup.
 
 ## Troubleshooting
 
 **Nothing is captured.** Check that your account is enabled in Settings. X may
 also have renamed its GraphQL operations: in DevTools > Network, filter
 `graphql`, scroll, and spot the operation name in the request URLs (after the
-hash, e.g. `.../abc123/HomeLatestTimeline`); adjust the `OPS` constant at the
-top of `interceptor.js`, then reload the extension and the X page.
+hash, e.g. `.../abc123/HomeLatestTimeline`); adjust the `SHIP_OPS` / `REFRESH_OPS`
+constants at the top of `interceptor.js`, then reload the extension and the X page.
 
-**Likes/bookmarks fail.** Make sure x.com is logged into the same account as the
-digest, and that you have scrolled x.com at least once since the last extension
-reload (that captures the session token). If they 404, X may have changed its
-operation ids — see `FAVORITE_QUERY_ID` / `BOOKMARK_QUERY_ID` in `background.js`.
+**Likes fail.** Make sure x.com is logged into the same account as the digest,
+and that you have scrolled x.com at least once since the last extension reload
+(that captures the session token). Operation ids are re-learned automatically
+from X's own traffic; the only hardcoded fallback is `OPS_FALLBACK` in
+`background.js`.
 
 **The badge counter doesn't move.** Reload the extension (`chrome://extensions` >
 ↻ icon) then reload the X tab (the interceptor installs at page load).

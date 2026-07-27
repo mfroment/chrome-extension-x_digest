@@ -337,11 +337,12 @@ export async function clusterEvents(settings, groups) {
     'You group event announcements that refer to the SAME real-world event. A ' +
     'single event is often announced by several accounts that emphasize different ' +
     'things and write the name/venue very differently (different scripts, ' +
-    'romanizations, translations, extra parentheticals, or a "Temple"/"Shrine"/' +
-    '"Hall" suffix). Match on MEANING + date + place, NOT exact strings:\n' +
+    'romanizations, translations, extra parentheticals, or a venue-type word such ' +
+    'as "Hall", "Park" or "Center" added or dropped). Match on MEANING + date + ' +
+    'place, NOT exact strings:\n' +
     '- Same date (±1 day) AND same venue → the SAME event, EVEN IF the names differ ' +
-    '(one may stress a deity/sub-name, another just "bon odori"). Treat romaji, ' +
-    'kanji/kana and translated spellings of a venue as the same place.\n' +
+    '(one may stress a sub-name or organizer, another only the generic event type). ' +
+    'Treat different scripts and transliterations of a venue as the same place.\n' +
     '- Same date AND same event name → the SAME event even if one entry omits the venue.\n' +
     '- Keep two entries separate ONLY when they have a DIFFERENT name AND a DIFFERENT place.\n' +
     'Return clusters covering EVERY input: each index appears in exactly one cluster.\n' +
