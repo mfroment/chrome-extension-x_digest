@@ -2,6 +2,52 @@
 
 Pending items we've explicitly decided NOT to do yet, so they aren't lost.
 
+## Next big milestones (raised 2026-07-27, not started — sleeping on them)
+
+Unnumbered on purpose: these are the headline items, well above the numbered
+maintenance work below. **B is a near-prerequisite for A** (a phone is only
+useful if it sees the same reading state), and B is the single most consequential
+design decision in the project so far.
+
+### A. Smartphone-friendly design
+
+- **The topbar doesn't fit a narrow screen**: brand + account selector + stats +
+  search + 2 toggles + 4 action buttons + a subbar with tabs and status.
+  (v0.10.9 freed the subbar-left slot, which helps.)
+- **Right-click has no touch equivalent**, and there are now EIGHT right-click
+  affordances — the canonical list is the Settings → "Right-click shortcuts"
+  table. Each needs a touch path: long-press → the same context menu is the
+  obvious mapping, plus an overflow "⋯" menu for the topbar actions.
+- **Hover-only information** also has no touch equivalent: the Undo tooltip (what
+  will be reverted), the reply-arrow tooltip (parent author), card titles.
+- Reading ergonomics: tap-target sizes, card density, and the fact that the
+  digest renders every visible post (see §1 — a phone will hit that wall sooner).
+- Capture on mobile is a separate question: the interceptor hooks x.com web
+  traffic, which does not apply to the native X app.
+
+### B. Sync the DB across devices
+
+Breaks the "everything stays local" property that has been the backbone of the
+privacy and ToS posture, so it deserves an explicit, deliberate decision rather
+than an incremental slide. `chrome.storage.sync` is nowhere near big enough
+(~100 KB), so this means real hosting.
+
+Settle these BEFORE writing code:
+1. **What syncs?** Everything (posts + media refs + LLM output), or only the
+   small mutable layer — read state, event flags, `processed_at`/summaries?
+   The latter is dramatically cheaper and less sensitive, and may be enough if
+   each device captures its own posts.
+2. **Is the phone read-only** or does it capture too? Read-only is much simpler
+   and probably the right first version.
+3. **Where does it live?** Self-hosted vs a managed backend. Affects cost, auth,
+   and how much of the privacy posture survives.
+4. **Conflict resolution.** Read/unread and flags are per-account and mostly
+   last-write-wins, but "mark read up to" style bulk actions need care.
+5. **Volume.** ~500 posts/day ≈ 180k/year (see §1). A sync design should assume
+   the windowed-loading model rather than "the whole DB", or the two will fight.
+6. **Privacy.** The posts are public, but *what you read and like* is not —
+   consider encrypting at rest, and never syncing the API key.
+
 ## 1. Scaling: the whole DB is held in memory (HIGH — real horizon)
 
 `digest.js load()` calls `db.getAllPosts()` and keeps every post for the account
