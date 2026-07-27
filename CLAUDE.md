@@ -245,6 +245,27 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Standalone-reply indication (v0.10.7)
+
+X routinely surfaces replies as top-level timeline posts; those now read as
+replies at a glance. No extra data needed — `reply_to`
+(`legacy.in_reply_to_status_id_str`) is already captured on every post.
+- `cardIndent(t, depth)` = `depth * 5` (thread nesting, unchanged) **plus**
+  `REPLY_INDENT`(18px) when a reply is rendered at top level (`depth === 0 &&
+  t.reply_to`). Applied as `margin-left`, so the normal spacing between
+  independent posts is untouched (the `.thread` last-child margins still apply).
+- `applyReplyStyle(card, t, depth)` (used by BOTH `postCard` and `collapsedCard`,
+  replacing their duplicated depth-margin lines) adds `.is-reply` + a `↳`
+  `replyArrow()` absolutely positioned in the gutter the indent opens up.
+  Nested thread replies (`depth > 0`) DON'T get the arrow — they already read as
+  replies from their nesting.
+- The arrow's tooltip names the parent's author when we captured it, and clicking
+  jumps to that post (`jumpToPost`); `stopPropagation` keeps it from expanding a
+  collapsed row. The jump is offered ONLY when the parent is `reachable` — present,
+  `!nested`, and `mine()` — because `byId` also holds nested records (quoted /
+  repost originals) that never render, so those clicks would silently do nothing.
+  Otherwise the arrow stays a plain (still tooltipped) marker.
+
 ## Collapsed-repost reposter label (v0.10.6)
 
 Collapsed repost cards now show the reposter's name (light gray `.reposter-mini`,

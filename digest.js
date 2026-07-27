@@ -278,6 +278,52 @@ function buildThreadIndex() {
 
 // Append a post's card and, when its thread is open, its replies recursively.
 // `depth` drives the left indent; `seen` guards against reply-to cycles.
+// Left indent for a card: 5px per thread nesting level, PLUS a wider indent when
+// a reply is shown at top level (X routinely surfaces replies as standalone
+// posts). Applied as a margin, so the normal spacing between independent posts
+// is preserved.
+const REPLY_INDENT = 18;
+function cardIndent(t, depth) {
+  return depth * 5 + (depth === 0 && t.reply_to ? REPLY_INDENT : 0);
+}
+
+// Curved "↳" arrow drawn in the left gutter opened up by the reply indent.
+// Names the parent's author when we captured it, and jumps to that post on
+// click when it's in the digest.
+function replyArrow(t) {
+  const parent = byId.get(t.reply_to);
+  // Only offer the jump when the parent actually renders as a timeline card for
+  // this account — `byId` also holds nested records (quoted / repost originals),
+  // which never appear in the list, so clicking those would do nothing.
+  const reachable = !!parent && !parent.nested && mine(parent);
+  const el = document.createElement('span');
+  el.className = 'reply-arrow';
+  el.textContent = '↳';
+  el.title = parent
+    ? reachable
+      ? `Reply to @${parent.screen_name} · click to jump to it`
+      : `Reply to @${parent.screen_name}`
+    : 'Reply (the post it answers was not captured)';
+  if (reachable) {
+    el.classList.add('linked');
+    el.addEventListener('click', (e) => {
+      e.stopPropagation(); // don't expand a collapsed row
+      jumpToPost(parent.id);
+    });
+  }
+  return el;
+}
+
+// Indent a card and, for a reply shown standalone, mark it with the gutter arrow.
+function applyReplyStyle(card, t, depth) {
+  const indent = cardIndent(t, depth);
+  if (indent) card.style.marginLeft = `${indent}px`;
+  if (depth === 0 && t.reply_to) {
+    card.classList.add('is-reply');
+    card.appendChild(replyArrow(t)); // absolutely positioned; DOM order is irrelevant
+  }
+}
+
 function appendThread(container, t, depth, seen) {
   if (seen.has(t.id)) return;
   seen.add(t.id);
@@ -837,7 +883,7 @@ function collapsedCard(t, depth = 0) {
   row.className = `post-collapsed tier-${t.category} ${t.read ? 'read' : 'unread'}`;
   row.dataset.id = t.id;
   row.title = 'Click to expand';
-  if (depth > 0) row.style.marginLeft = `${depth * 5}px`;
+  applyReplyStyle(row, t, depth);
 
   const head = document.createElement('div');
   head.className = 'collapsed-head';
@@ -1007,7 +1053,7 @@ function postCard(t, depth = 0) {
   const card = document.createElement('article');
   card.className = `post tier-${t.category || 'none'} ${t.read ? 'read' : 'unread'}`;
   card.dataset.id = t.id;
-  if (depth > 0) card.style.marginLeft = `${depth * 5}px`;
+  applyReplyStyle(card, t, depth);
 
   if (orig) {
     const note = document.createElement('div');

@@ -219,7 +219,7 @@ html, body {
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 12px 14px;
-  margin-bottom: 10px;
+  margin-bottom: 10px; /* gap between unrelated posts — same for every card type */
   position: relative;
 }
 
@@ -256,6 +256,23 @@ html, body {
   color: var(--ink-soft);
   margin-bottom: 4px;
 }
+
+/* A reply shown as a standalone post: indented, with a curved arrow in the
+   gutter the indent opens up (thread-nested replies keep their own indent). */
+.post.is-reply, .post-collapsed.is-reply { position: relative; }
+.reply-arrow {
+  position: absolute;
+  left: -15px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--ink-soft);
+  opacity: 0.75;
+  user-select: none;
+}
+.post.is-reply .reply-arrow { top: 14px; }
+.post-collapsed.is-reply .reply-arrow { top: 8px; }
+.reply-arrow.linked { cursor: pointer; }
+.reply-arrow.linked:hover { color: var(--ink); opacity: 1; }
 
 .post-text {
   white-space: pre-wrap;
@@ -355,8 +372,12 @@ html, body {
    nudged right by 5px (inline margin-left set in JS). A thread with no expanded
    replies is a single card, so it looks exactly as before. */
 .thread .post, .thread .post-collapsed { margin-bottom: 0; }
+/* Keep these in sync with .post / .post-collapsed margin-bottom: every card is
+   rendered inside a .thread wrapper, so these are the gaps you actually see.
+   Both card types use the SAME value, so the gap between two unrelated posts is
+   uniform whether they are full cards, collapsed rows, or a mix. */
 .thread > .post:last-child { margin-bottom: 10px; }
-.thread > .post-collapsed:last-child { margin-bottom: 6px; }
+.thread > .post-collapsed:last-child { margin-bottom: 10px; }
 
 .translate-btn {
   background: none;
@@ -595,7 +616,7 @@ a.action { text-decoration: none; }
   border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px 14px; /* right padding matches .post so the meta cluster aligns */
-  margin-bottom: 6px;
+  margin-bottom: 10px; /* same gap as .post so spacing is uniform */
   font-size: 13px;
   color: var(--ink-soft);
   cursor: pointer;
