@@ -245,6 +245,15 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Collapsed-repost reposter label (v0.10.6)
+
+Collapsed repost cards now show the reposter's name (light gray `.reposter-mini`,
+with a `›` separator) before the original poster (bold `.who-mini`) — e.g.
+`🔁 Reposter › Poster`. Both are right-clickable: the reposter name (and the 🔁)
+filter to the reposter (`authorMenu(t.screen_name)`), the poster name to the
+original author (`authorMenu(content.screen_name)`). The reposter label truncates
+first (max-width 40%, flex-shrink) so the bold poster stays visible.
+
 ## Translation Markdown rendering (v0.10.5)
 
 Translations were stored/shown as raw text, so the Markdown the model emits

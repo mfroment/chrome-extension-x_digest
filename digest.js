@@ -844,14 +844,22 @@ function collapsedCard(t, depth = 0) {
 
   // Repost marker (same signal as full cards, compact): 🔁 with the reposter
   // in the tooltip. The author shown is the original author (content).
+  // Repost: 🔁 + the reposter's name (light gray), shown before the original
+  // poster (bold). Both the marker and the reposter name filter to the reposter.
   let repost = null;
+  let reposter = null;
   if (orig) {
     repost = document.createElement('span');
     repost.className = 'rt-mini';
     repost.textContent = '🔁';
     repost.title = `Reposted by ${t.author_name} (@${t.screen_name}) · right-click to filter to this reposter`;
-    // Right-click the repost marker -> filter to the REPOSTER's posts + reposts.
     repost.addEventListener('contextmenu', (ev) => authorMenu(ev, t.screen_name));
+
+    reposter = document.createElement('span');
+    reposter.className = 'reposter-mini';
+    reposter.textContent = t.author_name;
+    reposter.title = `@${t.screen_name} · right-click to filter to this reposter`;
+    reposter.addEventListener('contextmenu', (ev) => authorMenu(ev, t.screen_name));
   }
 
   const who = document.createElement('span');
@@ -863,6 +871,7 @@ function collapsedCard(t, depth = 0) {
   const replyBtn = (childrenById.get(t.id) || []).length ? replyControl(t, content) : null;
   head.append(
     ...(repost ? [repost] : []),
+    ...(reposter ? [reposter] : []),
     who,
     ...(replyBtn ? [replyBtn] : []),
     metaCluster(t, content),

@@ -610,6 +610,9 @@ a.action { text-decoration: none; }
 .collapsed-head .spacer { flex: 1; }
 .post-collapsed .rt-mini { flex-shrink: 0; font-size: 12px; }
 .post-collapsed .who-mini { font-weight: 600; color: var(--ink); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Reposter name before the poster: light gray, truncates first so the bold poster stays visible. */
+.post-collapsed .reposter-mini { font-weight: 400; color: var(--ink-soft); flex-shrink: 4; min-width: 0; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.post-collapsed .reposter-mini::after { content: "›"; margin-left: 6px; opacity: 0.6; }
 .post-collapsed .when { margin-left: 0; flex-shrink: 0; }
 .post-collapsed .like-btn { flex-shrink: 0; }
 .post-collapsed .gist {
