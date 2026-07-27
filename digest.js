@@ -849,7 +849,9 @@ function collapsedCard(t, depth = 0) {
     repost = document.createElement('span');
     repost.className = 'rt-mini';
     repost.textContent = '🔁';
-    repost.title = `Reposted by ${t.author_name} (@${t.screen_name})`;
+    repost.title = `Reposted by ${t.author_name} (@${t.screen_name}) · right-click to filter to this reposter`;
+    // Right-click the repost marker -> filter to the REPOSTER's posts + reposts.
+    repost.addEventListener('contextmenu', (ev) => authorMenu(ev, t.screen_name));
   }
 
   const who = document.createElement('span');
@@ -950,6 +952,9 @@ function postCard(t, depth = 0) {
     const note = document.createElement('div');
     note.className = 'rt-note';
     note.textContent = `🔁 Reposted by ${t.author_name} (@${t.screen_name})`;
+    note.title = 'Right-click to filter to this reposter';
+    // Right-click the repost line -> filter to the REPOSTER's posts + reposts.
+    note.addEventListener('contextmenu', (ev) => authorMenu(ev, t.screen_name));
     card.appendChild(note);
   }
 
@@ -1572,6 +1577,30 @@ searchEl.addEventListener('keydown', (e) => {
     e.preventDefault();
     clearSearch();
   }
+});
+// Right-click the search box WHILE searching -> mark every matching (unread) post
+// as read in one undoable action. With no query the native menu (paste, …) is
+// left alone, so this can't mark the whole timeline read by accident.
+searchEl.addEventListener('contextmenu', (e) => {
+  if (!searchEl.value.trim()) return;
+  const unread = visiblePosts().filter((t) => !t.read);
+  if (!unread.length) return;
+  e.preventDefault();
+  const n = unread.length;
+  showContextMenu(e.clientX, e.clientY, [
+    {
+      label: `✓ Mark ${n} matching post${n > 1 ? 's' : ''} read`,
+      onClick: async () => {
+        const ids = unread.map((t) => t.id);
+        await applyFieldUpdates(ids.map((id) => ({ id, field: 'read', value: 1 })));
+        pushUndo(
+          `mark ${n} read`,
+          ids.map((id) => ({ id, field: 'read', value: 0 })),
+        );
+        await load();
+      },
+    },
+  ]);
 });
 searchClearEl.addEventListener('click', () => {
   clearSearch();

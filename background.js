@@ -39,6 +39,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       .catch((e) => sendResponse({ ok: false, error: String(e) }));
     return true;
   }
+  if (msg?.type === 'XD_POSTS_REFRESH' && Array.isArray(msg.posts)) {
+    refreshCounts(msg.posts)
+      .then((r) => sendResponse(r))
+      .catch((e) => sendResponse({ ok: false, error: String(e) }));
+    return true;
+  }
   if (msg?.type === 'XD_REFRESH_BADGE') {
     updateBadge().then(() => sendResponse({ ok: true }));
     return true;
@@ -341,6 +347,18 @@ async function handleObservedLike({ id, on, post, account }) {
   }
   const changed = await applyLike(id, !!on);
   return { ok: true, changed };
+}
+
+// Refresh counts/liked-state of posts ALREADY stored (viewed on a detail page,
+// profile, search, …). Update-only — never inserts, never re-tags accounts — so
+// browsing can't pull unrelated posts into the digest. Notifies an open digest
+// only when something actually changed.
+async function refreshCounts(posts) {
+  const { updated } = await putPosts(posts, null, { updateOnly: true });
+  if (updated > 0) {
+    chrome.runtime.sendMessage({ type: 'XD_STORED', added: 0, updated }).catch(() => {});
+  }
+  return { updated };
 }
 
 async function handlePosts(posts, account) {

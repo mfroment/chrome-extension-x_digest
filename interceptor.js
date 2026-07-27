@@ -7,13 +7,16 @@
 
   // GraphQL operations to intercept. If X renames its operations, adjust here
   // (DevTools > Network > filter "graphql" > find the operation name after the hash in the URL).
-  // Responses we PARSE. HomeLatestTimeline (Following/Latest) and HomeTimeline
-  // (For You) are stored wholesale — that's your feed. TweetDetail (a post's
-  // conversation view) is only CACHED, never stored on its own: the replies
-  // below a post are usually noise, so they stay out of the digest UNLESS you
-  // explicitly like one — then noteLikeAction ships just that cached record.
+  // Responses we PARSE. SHIP_OPS (the home feeds) are stored WHOLESALE — that's
+  // your feed. REFRESH_OPS (a post's conversation view, profiles, search, lists,
+  // bookmarks…) are parsed to (a) cache records so a liked reply can be stored
+  // with its content, and (b) UPDATE the counts/liked-state of posts ALREADY in
+  // the digest. REFRESH_OPS never INSERT, so merely browsing can't pull in posts
+  // you didn't want — only what's already there (timeline or liked) gets refreshed.
   const SHIP_OPS = /\/i\/api\/graphql\/[^/]+\/(HomeLatestTimeline|HomeTimeline)/;
-  const CAPTURE_OPS = /\/i\/api\/graphql\/[^/]+\/(HomeLatestTimeline|HomeTimeline|TweetDetail)/;
+  const REFRESH_OPS =
+    /\/i\/api\/graphql\/[^/]+\/(TweetDetail|UserTweets|UserTweetsAndReplies|SearchTimeline|ListLatestTweetsTimeline|Bookmarks|Likes|CommunityTweetsTimeline)/;
+  const isCaptureUrl = (url) => SHIP_OPS.test(url) || REFRESH_OPS.test(url);
 
   const MARKER = '__xDigest';
 
@@ -161,9 +164,14 @@
     try {
       const posts = extractPosts(json);
       for (const p of posts) cacheRecord(p);
-      const m = SHIP_OPS.exec(url || '');
-      if (m && posts.length > 0) {
-        window.postMessage({ [MARKER]: true, posts, op: m[1] }, window.location.origin);
+      if (posts.length === 0) return;
+      const shipped = SHIP_OPS.exec(url || '');
+      if (shipped) {
+        window.postMessage({ [MARKER]: true, posts, op: shipped[1] }, window.location.origin);
+      } else {
+        // Not a home feed: refresh counts/liked-state of already-stored posts
+        // only — never inserts.
+        window.postMessage({ __xDigestRefresh: true, posts }, window.location.origin);
       }
     } catch (e) {
       /* silent: never break the page */
@@ -379,7 +387,7 @@
           }
         }
       }
-      if (CAPTURE_OPS.test(url)) {
+      if (isCaptureUrl(url)) {
         p.then((resp) => {
           resp
             .clone()
@@ -401,7 +409,7 @@
         this.__bdUrl = url;
         noteOp(url);
       }
-      if (typeof url === 'string' && CAPTURE_OPS.test(url)) {
+      if (typeof url === 'string' && isCaptureUrl(url)) {
         const capturedUrl = url;
         this.addEventListener('load', function () {
           try {

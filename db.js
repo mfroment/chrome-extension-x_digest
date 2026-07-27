@@ -98,9 +98,12 @@ function tx(db, mode) {
  * - New post: read=0, captured_at=now, accounts=[accountId].
  * - Existing post: refresh counters, favorited, text, media… while preserving
  *   protected fields (read, captured_at, LLM fields) and accumulating accounts.
- * Returns { added, updated }.
+ * `opts.updateOnly` (used for refresh-on-browse): update EXISTING posts only —
+ * never insert — and DON'T re-tag accounts (a mere view shouldn't pull a post
+ * into another account's digest). Returns { added, updated }.
  */
-export async function putPosts(posts, accountId) {
+export async function putPosts(posts, accountId, opts = {}) {
+  const updateOnly = !!opts.updateOnly;
   const db = await openDB();
   const now = Date.now();
   let added = 0;
@@ -122,12 +125,16 @@ export async function putPosts(posts, accountId) {
           }
           // Never downgrade a timeline-level entry to a nested one
           if (existing.nested === false) merged.nested = false;
-          const accounts = new Set(existing.accounts || []);
-          if (accountId) accounts.add(accountId);
-          merged.accounts = [...accounts];
+          if (updateOnly) {
+            merged.accounts = existing.accounts; // refresh-only: leave attribution untouched
+          } else {
+            const accounts = new Set(existing.accounts || []);
+            if (accountId) accounts.add(accountId);
+            merged.accounts = [...accounts];
+          }
           store.put(merged);
           updated++;
-        } else {
+        } else if (!updateOnly) {
           store.put({
             ...t,
             read: 0,
@@ -137,6 +144,7 @@ export async function putPosts(posts, accountId) {
           });
           added++;
         }
+        // updateOnly && !existing → skip (never insert)
       };
     }
     transaction.oncomplete = () => resolve();

@@ -245,6 +245,28 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Browse-refresh + reposter filter + mark-filtered-read (v0.10.4)
+
+- **#1 Refresh-on-browse:** counts + liked-state now refresh for a post viewed
+  ANYWHERE (detail page, profile, search, list, bookmarks) **if it's already in
+  the digest** — update-only, never inserts. interceptor `REFRESH_OPS`
+  (`TweetDetail|UserTweets|UserTweetsAndReplies|SearchTimeline|
+  ListLatestTweetsTimeline|Bookmarks|Likes|CommunityTweetsTimeline`) →
+  `__xDigestRefresh` → content `XD_POSTS_REFRESH` → background `refreshCounts` →
+  `putPosts(posts, null, { updateOnly })`. `updateOnly` updates EXISTING rows only
+  and does NOT re-tag `accounts` (a mere view shouldn't pull a post into a digest).
+  SHIP_OPS (home) still store wholesale; likes still insert-on-like. Net: a post
+  on the timeline OR liked OR already in the digest gets refreshed; anything else
+  is ignored. Never advances `syncBoundary`.
+- **#2 Reposter filter:** right-click a repost's 🔁 marker / "Reposted by …" line
+  → filters the timeline to the REPOSTER (their own posts AND their reposts) via
+  `authorMenu(t.screen_name)`. The search hay already matches `@reposter` for both
+  a repost (its `screen_name` IS the reposter) and their authored posts.
+- **#3 Mark filtered read:** right-click the search box WHILE searching → "✓ Mark
+  N matching posts read" (all unread in `visiblePosts()`), undoable via `pushUndo`.
+  No-op on an empty query (keeps the native paste menu), so it can't mark the whole
+  timeline read by accident.
+
 ## Robust event-duplicate merging (v0.10.3)
 
 `pipeline.groupEvents` now runs a DETERMINISTIC merge pass before the LLM, so the

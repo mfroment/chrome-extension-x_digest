@@ -62,6 +62,15 @@ window.addEventListener('message', (event) => {
     return;
   }
 
+  // Counts/liked-state refresh for posts already in the digest (viewed on a
+  // detail page, profile, search, …). Update-only — never inserts.
+  if (data.__xDigestRefresh === true && Array.isArray(data.posts)) {
+    chrome.runtime
+      .sendMessage({ type: 'XD_POSTS_REFRESH', posts: data.posts })
+      .catch(() => {});
+    return;
+  }
+
   if (data.__xDigest !== true || !Array.isArray(data.posts)) return;
 
   const account = detectAccount();
