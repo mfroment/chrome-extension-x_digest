@@ -67,6 +67,12 @@ html, body {
 /* search / unread / sort sit centered between the brand and the action buttons */
 .center-controls { flex: 1 1 auto; justify-content: center; }
 
+/* Right-hand actions in three zones: Undo | Sync · Analyze · Refresh | ⚙.
+   The wider gap separates the zones; .btn-group keeps normal spacing inside.
+   When Undo is hidden it leaves the flow, so no stray gap is left behind. */
+.right-controls { gap: 22px; }
+.btn-group { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 #account {
   background: rgba(255, 255, 255, 0.12);
   border: 1px solid rgba(255, 255, 255, 0.25);

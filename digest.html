@@ -31,9 +31,11 @@
     </div>
     <div class="controls right-controls">
       <button id="undo" class="btn" hidden title="Undo the last mark action (Ctrl/⌘+Z)">↶ Undo</button>
-      <button id="analyze" class="btn" title="Classify, summarize and extract events with Claude (right-click: re-analyze all)">✨ Analyze</button>
-      <button id="sync" class="btn" title="Open x.com and auto-scroll the Following feed to fetch new posts, stopping when caught up">🔄 Sync</button>
-      <button id="refresh" class="btn" title="Reload from the database">Refresh</button>
+      <div class="btn-group">
+        <button id="sync" class="btn" title="Open x.com and auto-scroll the Following feed to fetch new posts, stopping when caught up">🔄 Sync</button>
+        <button id="analyze" class="btn" title="Classify, summarize and extract events with Claude (right-click: re-analyze all)">✨ Analyze</button>
+        <button id="refresh" class="btn" title="Reload from the database">Refresh</button>
+      </div>
       <button id="open-settings" class="btn" title="Settings">⚙</button>
     </div>
     <div class="controls subbar">
