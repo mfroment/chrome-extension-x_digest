@@ -1350,6 +1350,67 @@ async function translate(t, content, btn) {
  * plus every post that was never analyzed (the pipeline always picks those up).
  * opts: { onlyOther, onlyUnread }.
  */
+/**
+ * Re-analyze an explicit set of posts (the current search selection), rather
+ * than one of the broad scopes `reanalyze` offers. Clears just those posts'
+ * analysis, then runs the pipeline restricted to their ids — cheap enough to
+ * A/B a prompt change on a handful of posts.
+ *
+ * Note: a targeted run skips event CLUSTERING (runPipeline does that only for a
+ * full run). If the selection included event posts, their events are re-extracted
+ * and reappear as singleton groups via ensureEventGroups on load; the next full
+ * ✨ Analyze re-clusters them.
+ */
+async function reanalyzePosts(posts, label) {
+  if (!selectedAccount) {
+    pipelineStatusEl.textContent = 'No account enabled.';
+    return;
+  }
+  const global = await loadGlobal();
+  if (!global.apiKey) {
+    chrome.runtime.openOptionsPage();
+    return;
+  }
+  const n = posts.length;
+  if (!n) return;
+  if (
+    !confirm(
+      `Re-analyze ${n} post${n > 1 ? 's' : ''} matching ${label}?\n` +
+        'Their current summary, theme and extracted event are discarded and ' +
+        'recomputed. This re-spends API tokens.',
+    )
+  ) {
+    return;
+  }
+
+  focusExceptionId = null;
+  const ids = new Set(posts.map((t) => t.id));
+  const btn = document.getElementById('analyze');
+  btn.disabled = true;
+  try {
+    await clearAnalysis(selectedAccount, { onlyIds: ids });
+    await load(); // so the pipeline sees them as unprocessed
+    const config = accountConfig(global, accounts[selectedAccount]);
+    const result = await runPipeline(
+      config,
+      selectedAccount,
+      (msg) => {
+        pipelineStatusEl.textContent = msg;
+      },
+      { onlyIds: ids },
+    );
+    if (result.errors?.length > 0) {
+      console.warn('[X Digest] pipeline errors:', result.errors);
+      pipelineStatusEl.title = result.errors.join('\n');
+    }
+  } catch (e) {
+    pipelineStatusEl.textContent = `Re-analysis failed: ${e.message}`;
+  } finally {
+    btn.disabled = false;
+    await load();
+  }
+}
+
 async function reanalyze(opts) {
   if (!selectedAccount) {
     pipelineStatusEl.textContent = 'No account enabled.';
@@ -1712,25 +1773,36 @@ searchEl.addEventListener('keydown', (e) => {
 // as read in one undoable action. With no query the native menu (paste, …) is
 // left alone, so this can't mark the whole timeline read by accident.
 searchEl.addEventListener('contextmenu', (e) => {
-  if (!searchEl.value.trim()) return;
-  const unread = visiblePosts().filter((t) => !t.read);
-  if (!unread.length) return;
+  const q = searchEl.value.trim();
+  if (!q) return;
+  const matching = visiblePosts(); // exactly what the search is showing
+  if (!matching.length) return;
   e.preventDefault();
-  const n = unread.length;
-  showContextMenu(e.clientX, e.clientY, [
-    {
+
+  const items = [];
+  const unread = matching.filter((t) => !t.read);
+  if (unread.length) {
+    const n = unread.length;
+    items.push({
       label: `✓ Mark ${n} matching post${n > 1 ? 's' : ''} read`,
       onClick: async () => {
         const ids = unread.map((t) => t.id);
         await applyFieldUpdates(ids.map((id) => ({ id, field: 'read', value: 1 })));
         pushUndo(
-          `mark ${plural(n, 'post')} read matching "${searchEl.value.trim()}"`,
+          `mark ${plural(n, 'post')} read matching "${q}"`,
           ids.map((id) => ({ id, field: 'read', value: 0 })),
         );
         await load();
       },
-    },
-  ]);
+    });
+  }
+  const m = matching.length;
+  items.push({
+    label: `↻ Re-analyze ${m} matching post${m > 1 ? 's' : ''}`,
+    onClick: () => reanalyzePosts(matching, `"${q}"`),
+  });
+
+  showContextMenu(e.clientX, e.clientY, items);
 });
 searchClearEl.addEventListener('click', () => {
   clearSearch();

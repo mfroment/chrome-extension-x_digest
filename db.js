@@ -442,11 +442,14 @@ export async function markUnreadSince(threshold, accountId) {
  *   - onlyUnread: only unread posts
  *   - onlyEvents: only posts that produced an event (cheap way to re-extract just
  *     event posts, e.g. to backfill a new field like end_date)
+ *   - onlyIds: a Set of post ids — an explicit selection (the search-filtered
+ *     "re-analyze matching posts" action), useful for A/B-ing a prompt change on
+ *     a handful of posts instead of the whole digest
  * Returns the number of rows cleared.
  */
 export async function clearAnalysis(
   accountId,
-  { onlyOther = false, onlyUnread = false, onlyEvents = false } = {},
+  { onlyOther = false, onlyUnread = false, onlyEvents = false, onlyIds = null } = {},
 ) {
   const db = await openDB();
   let n = 0;
@@ -462,7 +465,8 @@ export async function clearAnalysis(
         belongsTo(t, accountId) &&
         (!onlyOther || t.category === 'other') &&
         (!onlyUnread || !t.read) &&
-        (!onlyEvents || !!t.event);
+        (!onlyEvents || !!t.event) &&
+        (!onlyIds || onlyIds.has(t.id));
       if (match) {
         delete t.processed_at;
         delete t.category;

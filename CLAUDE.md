@@ -245,6 +245,23 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Re-analyze the search selection (v0.10.10)
+
+Right-clicking the search box now offers "↻ Re-analyze N matching posts" beside
+the existing mark-read item. The point is A/B-ing prompt changes: re-run the
+pipeline over a handful of posts instead of the whole digest.
+- `db.clearAnalysis` gained an `onlyIds` option (a Set) alongside the existing
+  onlyOther/onlyUnread/onlyEvents scopes.
+- `digest.reanalyzePosts(posts, label)` confirms, clears just those ids, reloads
+  (so the pipeline sees them unprocessed), then `runPipeline(..., { onlyIds })`.
+- The selection is `visiblePosts()` — exactly what the search shows, so the
+  Unread-only toggle narrows it too. Read posts are included (unlike the
+  mark-read item, which only lists unread ones).
+- CAVEAT: a targeted run skips event CLUSTERING (`runPipeline` only clusters on a
+  full run). Event posts in the selection are re-extracted and come back as
+  singleton groups via `ensureEventGroups` on load; the next full ✨ Analyze
+  re-clusters them.
+
 ## Mark-unread via right-click + undo labels + shortcut help (v0.10.9)
 
 - The inline "Mark unread from [date] [Apply]" control is GONE from the subbar.
