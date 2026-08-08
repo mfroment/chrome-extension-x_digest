@@ -52,6 +52,22 @@ function firstText(response) {
 // Classification (batch)
 // ---------------------------------------------------------------------------
 
+/**
+ * The output-language rule, repeated at the END of every system prompt.
+ * The posts themselves are the last thing the model reads before generating, so
+ * a language instruction stated only once (at the top) loses out to the pull of
+ * the source language — which is how summaries end up in the post's language, or
+ * occasionally in some unrelated one. Restating it last is the single biggest
+ * lever; the per-field schema descriptions below reinforce it at generation time.
+ */
+const languageRule = (lang) =>
+  `\n\nOUTPUT LANGUAGE — this overrides everything above.\n` +
+  `Write ALL output in ${lang}. The posts are usually NOT in ${lang}; that is ` +
+  `expected and does not change the output language. Never mirror the language ` +
+  `or script of the post, and never use a third language: even when a post is ` +
+  `entirely in another language, your output is still written in ${lang}. ` +
+  `Proper nouns (event, place and person names) may keep their original spelling.`;
+
 // Posts are keyed by a small integer index (i), not their snowflake id:
 // a 19-digit id exceeds JS/JSON safe-integer range, and the model tends to
 // echo it back as a rounded number that no longer matches. The index is
@@ -89,10 +105,11 @@ export async function classifyBatch(settings, posts) {
     '\n\nTier "summary" — posts matching any of these themes:\n' +
     settings.summaryThemes +
     '\n\nTier "other" — everything else.\n\n' +
-    'For EVERY post, also provide a short 1-3 word theme label describing its topic. ' +
-    `The theme label MUST be written in ${settings.language} — translate the topic into ` +
-    `${settings.language}; do not leave it in the post's original language unless that is ${settings.language}.\n` +
-    'Return exactly one result per input post, echoing its "i" value. Do not skip any.';
+    'For EVERY post, also provide a short 1-3 word theme label describing its topic.\n' +
+    'Return exactly one result per input post, echoing its "i" value. Do not skip any.' +
+    languageRule(settings.language) +
+    `\nThe theme label in particular must be TRANSLATED into ${settings.language}, ` +
+    "not copied from the post's own wording.";
 
   const response = await apiCall(settings, {
     model: settings.model,
@@ -123,7 +140,11 @@ export async function classifyBatch(settings, posts) {
 // ---------------------------------------------------------------------------
 
 // Keyed by integer index (see note on CLASSIFY_SCHEMA).
-const SUMMARIZE_SCHEMA = {
+// `lang` is deliberately listed BEFORE `summary`: structured outputs are emitted
+// in schema order, so the model states the language it is about to write in and
+// then writes it — a self-conditioning step that measurably steadies adherence.
+// It also gives us an exact-match signal to retry on (see summarizeBatch).
+const summarizeSchema = (lang) => ({
   type: 'object',
   properties: {
     results: {
@@ -132,34 +153,45 @@ const SUMMARIZE_SCHEMA = {
         type: 'object',
         properties: {
           i: { type: 'integer' },
-          summary: { type: 'string' },
+          lang: {
+            type: 'string',
+            description:
+              `Exactly "${lang}" if the summary below is written in ${lang}; ` +
+              'otherwise the name of the language you actually used.',
+          },
+          summary: {
+            type: 'string',
+            description: `One short sentence, written in ${lang}.`,
+          },
         },
-        required: ['i', 'summary'],
+        required: ['i', 'lang', 'summary'],
         additionalProperties: false,
       },
     },
   },
   required: ['results'],
   additionalProperties: false,
-};
+});
 
 /**
  * One-line summaries for a batch of posts, in the output language.
  * `posts`: [{ id, author, text }]. Returns Map id -> summary.
  */
-export async function summarizeBatch(settings, posts) {
+export async function summarizeBatch(settings, posts, { retry = true } = {}) {
+  const lang = settings.language;
   const system =
-    `You summarize X posts (which may be in any language) in ${settings.language}. ` +
+    `You summarize X posts (which may be in any language) in ${lang}. ` +
     'For each post, write ONE short sentence capturing the essential content — ' +
     'who/what/when/where when relevant. Keep proper nouns (event names, places) ' +
     'as-is with a reading or translation if helpful. ' +
-    'Return exactly one result per input post, echoing its "i" value. Do not skip any.';
+    'Return exactly one result per input post, echoing its "i" value. Do not skip any.' +
+    languageRule(lang);
 
   const response = await apiCall(settings, {
     model: settings.model,
     max_tokens: 8000,
     system,
-    output_config: { format: { type: 'json_schema', schema: SUMMARIZE_SCHEMA } },
+    output_config: { format: { type: 'json_schema', schema: summarizeSchema(lang) } },
     messages: [
       {
         role: 'user',
@@ -172,9 +204,26 @@ export async function summarizeBatch(settings, posts) {
 
   const parsed = JSON.parse(firstText(response));
   const map = new Map();
+  const wrongLang = []; // posts the model itself flagged as off-language
   for (const r of parsed.results || []) {
     const t = posts[r.i];
-    if (t) map.set(t.id, r.summary);
+    if (!t) continue;
+    if (retry && r.lang && r.lang.trim().toLowerCase() !== lang.trim().toLowerCase()) {
+      wrongLang.push(t);
+      continue;
+    }
+    map.set(t.id, r.summary);
+  }
+
+  // One re-run for the stragglers only — a small batch of the offending posts,
+  // where the language rule isn't competing with 30 posts of source text.
+  if (wrongLang.length) {
+    try {
+      const redone = await summarizeBatch(settings, wrongLang, { retry: false });
+      for (const [id, summary] of redone) map.set(id, summary);
+    } catch (e) {
+      /* keep going: these posts stay unprocessed and retry on the next run */
+    }
   }
   return map;
 }
@@ -183,10 +232,13 @@ export async function summarizeBatch(settings, posts) {
 // Full-detail extraction (per post, with flyer images)
 // ---------------------------------------------------------------------------
 
-const EXTRACT_SCHEMA = {
+const extractSchema = (lang) => ({
   type: 'object',
   properties: {
-    summary: { type: 'string' },
+    summary: {
+      type: 'string',
+      description: `2-4 sentence summary, written in ${lang} whatever the post's language.`,
+    },
     event: {
       anyOf: [
         {
@@ -211,7 +263,7 @@ const EXTRACT_SCHEMA = {
   },
   required: ['summary', 'event'],
   additionalProperties: false,
-};
+});
 
 /**
  * Detailed extraction for a full-detail post: reads attached images (flyers
@@ -234,7 +286,11 @@ export async function extractFull(settings, post) {
     'date = start day (YYYY-MM-DD); end_date = last day (YYYY-MM-DD) — set it equal to ' +
     'date for a single-day event, or the final day for a multi-day one (e.g. a 3-day or ' +
     'month-long event). Use null for a field that is genuinely unknown. If it is a ' +
-    'report about a past event or not an announcement, set event to null.';
+    'report about a past event or not an announcement, set event to null.' +
+    languageRule(settings.language) +
+    '\nThe event\'s name and venue are the exception: keep them as written in the ' +
+    'post (optionally adding a reading or translation in parentheses). Everything ' +
+    `else you write, the summary above all, is in ${settings.language}.`;
 
   const content = [];
   for (const url of (post.images || []).slice(0, 4)) {
@@ -246,7 +302,7 @@ export async function extractFull(settings, post) {
     model: settings.model,
     max_tokens: 2000,
     system,
-    output_config: { format: { type: 'json_schema', schema: EXTRACT_SCHEMA } },
+    output_config: { format: { type: 'json_schema', schema: extractSchema(settings.language) } },
     messages: [{ role: 'user', content }],
   });
 
@@ -268,7 +324,8 @@ export async function translatePost(settings, post) {
     'Keep proper nouns with their original writing plus a translation/reading in parentheses ' +
     'when helpful. Copy any emoji from the original exactly as-is; never replace an emoji ' +
     'with a word or description. If images are attached and contain text (flyers, posters, ' +
-    'schedules), add a section transcribing their key information in the target language.';
+    'schedules), add a section transcribing their key information in the target language.' +
+    languageRule(settings.language);
 
   const content = [];
   for (const url of (post.images || []).slice(0, 4)) {
@@ -333,6 +390,10 @@ export async function clusterEvents(settings, groups) {
     }));
   }
 
+  // NOTE: deliberately NO languageRule here. Clustering emits canonical event
+  // names and venues, which must stay in their ORIGINAL language/script so they
+  // still match the posts (and each other) — forcing them into the output
+  // language would break the very matching this call exists to do.
   const system =
     'You group event announcements that refer to the SAME real-world event. A ' +
     'single event is often announced by several accounts that emphasize different ' +
@@ -415,7 +476,8 @@ export async function mergeEventDescription(settings, name, summaries) {
     `Merge these announcements of the same event ("${name}") into ONE concise ` +
     `description in ${settings.language}, 2-4 sentences, combining all concrete details ` +
     '(dates, times, venue, access, program/lineup, cancellation) without repetition. ' +
-    'Keep proper nouns.';
+    'Keep proper nouns.' +
+    languageRule(settings.language);
   const response = await apiCall(settings, {
     model: settings.model,
     max_tokens: 900,
