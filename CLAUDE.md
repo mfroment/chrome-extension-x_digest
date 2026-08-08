@@ -245,6 +245,34 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Output-language adherence in prompts (v0.10.11)
+
+Summaries occasionally came back in the post's own language, or in an unrelated
+one. Diagnosis: POSITION. The language was stated once at the TOP of the system
+prompt, but the last thing the model reads before generating is a wall of
+foreign-language post text — recency pulls it toward the source language. The
+model is `claude-haiku-4-5`, the weakest tier for instruction adherence, and it
+does NOT support the `effort` parameter, so prompt structure is the only lever
+(a bigger model was explicitly ruled out on cost).
+- `languageRule(lang)` is appended at the END of every prompt producing
+  user-facing prose: `classifyBatch`, `summarizeBatch`, `extractFull`,
+  `translatePost`, `mergeEventDescription`. It says posts usually are NOT in the
+  output language, that this is expected, and that a third language is never
+  right — while allowing proper nouns to keep their original spelling.
+- Schemas became functions of `lang` (`summarizeSchema`, `extractSchema`) so
+  per-field `description`s name the target language — present at generation time,
+  not only in the system prompt.
+- `summarizeBatch` emits a `lang` field BEFORE `summary` (structured outputs are
+  generated in schema order): the model states the language, then writes it —
+  self-conditioning, plus an exact-match signal. Items it flags as off-language
+  are re-run ONCE via `summarizeBatch(..., { retry: false })` on just those posts,
+  where the rule isn't competing with 30 posts of source text.
+- `clusterEvents` deliberately has NO languageRule (comment in place so it isn't
+  "fixed" later): its canonical event names/venues must stay in the ORIGINAL
+  script or they stop matching the posts — the whole point of that call.
+- Evaluate a prompt change with the search context menu's "↻ Re-analyze N
+  matching posts" (v0.10.10) over the same selection before and after.
+
 ## Re-analyze the search selection (v0.10.10)
 
 Right-clicking the search box now offers "↻ Re-analyze N matching posts" beside
