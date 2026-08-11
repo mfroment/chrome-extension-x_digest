@@ -245,6 +245,28 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Fix: refresh-on-browse could PROMOTE a nested post (v0.10.12)
+
+Symptom: opening a quoted post on X (via "Open on X" → clicking the quote) made
+that post — and others around it — appear in the digest as new unanalyzed posts,
+without ever being liked. That contradicts the stated rule (home feed or explicit
+like are the only ways in).
+- Cause: a quoted post / repost original is stored as a `nested` reference record
+  (present but never rendered). Viewing it on its own page returns it at TOP level
+  (`nested: false`), and `putPosts`' `{...existing, ...t}` merge let that overwrite
+  the stored `nested: true` — `nested` is NOT in PROTECTED_FIELDS. The old guard
+  `if (existing.nested === false) merged.nested = false` only blocked the OPPOSITE
+  direction (visible → nested).
+- So `updateOnly` blocked INSERTS but not PROMOTIONS, and a promotion is an insert
+  as far as the digest is concerned. The promoted post also shows as unanalyzed,
+  because the pipeline skips nested records — hence the red "not analyzed" border.
+- Fix: in `updateOnly` mode `merged.nested = existing.nested` — a refresh may
+  never change what the digest SHOWS, only counts/liked-state. Liking still
+  promotes (handleObservedLike → handlePosts, not updateOnly), which is intended:
+  explicitly liking a quoted post should pull it into the digest.
+- Not retroactively repairable: an already-promoted record is indistinguishable
+  from a legitimately captured one, so existing strays stay until marked read.
+
 ## Output-language adherence in prompts (v0.10.11)
 
 Summaries occasionally came back in the post's own language, or in an unrelated

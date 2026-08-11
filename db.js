@@ -127,6 +127,13 @@ export async function putPosts(posts, accountId, opts = {}) {
           if (existing.nested === false) merged.nested = false;
           if (updateOnly) {
             merged.accounts = existing.accounts; // refresh-only: leave attribution untouched
+            // ...and never PROMOTE a nested reference record either. A quoted post
+            // (or a repost's original) is stored nested and hidden; viewing it on
+            // its own page returns it at top level, which would otherwise flip
+            // `nested` to false and make it appear in the digest as a brand-new
+            // unanalyzed post. A refresh must never change what the digest SHOWS —
+            // only the home feed or an explicit like may do that.
+            merged.nested = existing.nested;
           } else {
             const accounts = new Set(existing.accounts || []);
             if (accountId) accounts.add(accountId);
