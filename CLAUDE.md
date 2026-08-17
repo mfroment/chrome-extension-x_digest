@@ -266,6 +266,86 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   `.btn`, unchanged). The sort label carries its direction: `↓ Oldest first` /
   `↑ Newest first` via the shared `sortLabel(asc)`.
 
+## Windowed rendering + folding regression fix (v0.11.5)
+
+Untoggling "Unread only" (or having "Analyzed only" on) froze the page on a large
+DB. Two causes, both now fixed:
+- **Regression (mine, v0.11.2):** the `folding` condition had grown
+  `&& !analyzedOnly()`, copied from `unreadOnly` without thinking it through.
+  Under Unread-only a fully-read day CANNOT exist, so folding is meaningless
+  there — but nearly every post is analyzed, so under Analyzed-only fully-read
+  days very much still exist and must still collapse. Gating on it left every
+  old read day expanded: ~6300 cards ≈ 190k DOM nodes. Folding now depends only
+  on `!unreadOnly() && !searchEl.value.trim()`.
+- **Structural (BACKLOG §1 item 3): DOM windowing.** `render()` now emits at most
+  `renderLimit` posts (`RENDER_CHUNK` = 150) and appends a `.render-more`
+  sentinel; `moreObserver` (IntersectionObserver, 800px margin) extends the
+  window as it nears the viewport, and the sentinel is clickable as a fallback.
+  `updateStats` still reports the FULL filtered count, not the rendered subset.
+  `jumpToPost` grows the read-day limit AND the window together, bounded by a
+  guard so an unreachable target can't spin.
+  Folding remains the cheaper lever — windowing is the backstop for the cases it
+  can't help (one huge partially-read day, or a filter matching thousands within
+  a single day).
+- Date headers now show the YEAR when the date isn't in the current year, via a
+  shared `dateLabel()` used by both the timeline day separator and the past-event
+  date header — an old entry no longer reads as if it were recent.
+- **Folding now applies UNDER a filter too** (it used to be suppressed whenever a
+  query was active). The day grouping in `render()` has always run on the
+  FILTERED `items`, so this needed no new machinery: `d.allRead` and the header
+  count already describe that day's MATCHES, and unfolding reveals only those. A
+  filter therefore narrows what sits inside each date instead of flattening the
+  dates into one long list. Only Unread-only still suppresses folding (a
+  fully-read day cannot exist there). `filtering()` (query OR Analyzed-only —
+  NOT Unread-only, which never reaches it) only changes WORDING: the fold count
+  reads `N matching` rather than `N read`, and the reveal button becomes
+  `+ show N older matching dates`.
+  The staggered `READ_DAY_LIMITS` limit applies under a filter exactly as it does
+  without one. It was briefly skipped there on the theory that hiding whole dates
+  buries matches behind a second disclosure — wrong: incremental drill-down is
+  wanted under a filter just as much, and skipping it dumped every past date on
+  screen at once (reported 2026-08-17 with a screenshot). Keep the limit.
+- **`▸ Unfold all dates below`** (`foldAllBtn`, `.fold-all`) bulk-opens every
+  foldable date in view. It anchors immediately before the FIRST FOLDABLE date
+  header — foldable, not folded, so the button doesn't move when the state flips —
+  which is where the folded region starts in both sort orders (oldest-first puts
+  the read days at the top, newest-first at the bottom). Under oldest-first the
+  `more-days` button is inserted at `frag.firstChild` AFTER this one is placed, so
+  the order comes out `+ show N older read dates` → `▸ Unfold all dates below` →
+  dates. It's a TOGGLE (`▾ Fold all dates below` once nothing is folded), because
+  re-folding 200 dates one header at a time isn't a thing anyone should have to
+  do. Safe on a huge DB: `renderLimit` still caps what reaches the DOM. Absent
+  when truncation stopped the loop before any foldable date (nothing to act on
+  yet).
+  INVARIANT: every class `render()` inserts must appear in its opening
+  `listEl.querySelectorAll(...)` cleanup — `.thread, .day-sep, .reading-line,
+  .more-days, .render-more, .fold-all` is currently the complete set. `.fold-all`
+  was missed when it was added, so each render appended another copy and the
+  Refresh button visibly stacked them (same report). Add a node type, add it there.
+- **Reveal state resets on a filter CLEAR, not on every filter EDIT** — the two
+  halves mean different things:
+  - `unfoldedDays` + `readDayLimitIdx` are CHOICES (the user clicked to unwrap a
+    day), so editing a query must not silently re-wrap them. Unwrap a date, refine
+    the query, and it stays open on the narrower set.
+  - `renderLimit` is a SCROLLING ARTIFACT that regrows on its own, so it always
+    rewinds — carrying a window inflated by earlier scrolling into a freshly
+    filtered set re-creates the freeze windowing exists to prevent.
+  Two entry points enforce it, and a filter handler must never call bare
+  `render()`/`renderEvents()`: `refilter()` (edit — window only) and
+  `refilterFresh()` (clear — `resetFolding()`, which rewinds the window too),
+  plus `refilterEventsFresh()`. Assignments: search × / Escape / backspacing the
+  box to empty → fresh (an empty box is no filter, so how it emptied doesn't
+  matter); editing a non-empty query → edit; SORT → edit (it reorders the same
+  set, so re-wrapping days would be gratuitous); Unread-only / Analyzed-only and
+  the Events "Unhidden only" → fresh (unchanged shipped behaviour). Events have
+  no render window, so an events-search edit is a plain `renderEvents()`; that
+  box has no × , so an emptied field is its clear.
+  Everything that is NOT a filter change (Analyze, Refresh, mark-read, thread
+  expand, the window-growth observer) still calls `render()` directly — those
+  must PRESERVE fold and scroll state, which is what the v0.10.1 scroll anchoring
+  is for. The rule is "filter change → `refilter*()`, everything else →
+  `render()`", never "always reset".
+
 ## Search query language (v0.11.0)
 
 The timeline search box is now a query language, not a substring match — the
@@ -278,15 +358,16 @@ in favour of `likes:>10` for that reason).
 - Terms: bare word (matches the whole hay — text, author, summary, theme, event
   name/venue), `"quoted"`, `@handle`, `likes:`/`replies:`/
   `reposts:` with `> >= < <= =` (bare number = equals), `is:read|unread|repost|
-  reply`, `has:media|link`, `tier:full|summary|other|none` (`none` = not
+  reply|liked`, `has:media|link`, `tier:full|summary|other|none` (`none` = not
   analyzed yet, i.e. the red-bordered cards). Deliberately ONE spelling per
   operator — no `from:`/`author:`/`category:` synonyms and no `main|side|off`
   tier aliases, so the vocabulary is exactly what the docs list.
 - **`"quotes"` search the post BODY only** — never the summary/author/theme.
   That distinction is the whole point of the quoting rule; `body` and `hay` are
   separate fields on the per-post `queryContext`.
-- Counts come from the ORIGINAL on a repost (`orig || t`), matching what the card
-  displays.
+- Counts AND `is:liked` come from the ORIGINAL on a repost (`orig || t`), matching
+  what the card displays (the ♥ reflects the original's state). Use `-is:liked`
+  for the inverse rather than an `is:unliked` term — one spelling per operator.
 - A query that doesn't parse (unbalanced parens mid-typing, stray operator)
   returns `null` from `compileQuery` and the caller falls back to a plain
   substring match — the box never breaks while you type.

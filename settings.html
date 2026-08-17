@@ -51,7 +51,7 @@
           <tr><th><code>@handle</code></th><td>The poster, the reposter, or a repost's original author.</td></tr>
           <tr><th><code>likes:&gt;10</code></th><td>Also <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>=</code>. A bare number means equals: <code>likes:20</code>.</td></tr>
           <tr><th><code>replies:&gt;5</code><br /><code>reposts:&gt;10</code></th><td>Same comparisons, on the reply and repost counts.</td></tr>
-          <tr><th><code>is:read</code> <code>is:unread</code><br /><code>is:repost</code> <code>is:reply</code></th><td>Filter by state or kind of post.</td></tr>
+          <tr><th><code>is:read</code> <code>is:unread</code><br /><code>is:liked</code><br /><code>is:repost</code> <code>is:reply</code></th><td>Filter by state or kind of post. <code>is:liked</code> matches the ♥ shown on the card (the original's state on a repost); use <code>-is:liked</code> for the ones you haven't liked.</td></tr>
           <tr><th><code>has:media</code><br /><code>has:link</code></th><td>Only posts carrying an image/video, or a link.</td></tr>
           <tr><th><code>tier:full</code> <code>tier:summary</code><br /><code>tier:other</code> <code>tier:none</code></th>
             <td>Filter by how the analysis classified the post — full-detail, summary, off-theme,

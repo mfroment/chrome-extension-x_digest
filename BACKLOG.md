@@ -57,7 +57,17 @@ in the `all` array for the page's lifetime; every `render()` scans it.
   **months-not-years horizon**: around ~50–70k posts, `getAllPosts()` + holding
   it all starts to slow the digest *open* (memory + `getAll` latency).
 - Read-day folding (v0.8.0) + lazy avatars only bound the **DOM**, not the data.
-  Plain DOM windowing (deferred) also only bounds the DOM.
+  DOM windowing (built in v0.11.5, item 3 below) also only bounds the DOM.
+- CALIBRATION (2026-08-17): the slowdown reported as "the DB has grown to the
+  extent that untoggling Unread only has a huge performance impact" turned out to
+  be a **v0.11.2 regression, not this item** — a stray `&& !analyzedOnly()` on the
+  folding condition kept every fully-read day expanded (~6300 cards ≈ 190k DOM
+  nodes). Fixed in v0.11.5. So there is NO measured evidence yet for the
+  months-horizon estimate above; it remains an extrapolation from the posts/day
+  rate. Before spending the rework in #1, MEASURE the real cost of
+  `getAllPosts()` + `all` at the current row count — the acute symptom that
+  motivated the urgency was a bug, and DOM-level fixes have since absorbed the
+  rendering side.
 
 Priority order when we revisit (for this growth curve):
 1. **Windowed data loading** — load only a recent window (e.g. last 30–60 days)
@@ -67,9 +77,10 @@ Priority order when we revisit (for this growth curve):
 2. **Retention / pruning** — optionally delete or archive old *read* posts so the
    IndexedDB store itself doesn't grow unbounded. Consider an export/backup first
    (data is local-only; pruning is destructive).
-3. **DOM windowing** — render only ~150 cards near the viewport, append on scroll
-   (sentinel). Smaller concern once #1 is in; still useful for a single huge
-   unread day. Fits oldest-first reading (window grows downward).
+3. ~~**DOM windowing**~~ — DONE in v0.11.5 (`RENDER_CHUNK` = 150 + a
+   `.render-more` IntersectionObserver sentinel). Folding stays the cheaper lever;
+   windowing is the backstop for what folding can't collapse (a single huge
+   partially-read day, or a filter matching thousands within one date).
 
 ## 2. Small pending cleanups
 

@@ -93,6 +93,7 @@ const unfoldedDays = new Set(); // dayKeys of read days the user manually expand
 function resetFolding() {
   readDayLimitIdx = 0;
   unfoldedDays.clear();
+  resetRenderLimit(); // a different filter means a different first screenful
 }
 
 // Events tab has its own search / sort / "unhidden only", independent of the timeline.
@@ -107,10 +108,55 @@ const eventUnhiddenOnly = () => eventUnhiddenEl.getAttribute('aria-pressed') ===
 const EVENT_PAST_LIMITS = [5, 15, 35, 85, Infinity];
 let eventPastLimitIdx = 0;
 const eventUnfoldedDates = new Set(); // past event dates the user manually expanded
+/**
+ * Reveal state splits in two, and a filter change treats the halves differently:
+ * - `unfoldedDays` / the read-day limit are CHOICES. The user clicked to unwrap a
+ *   day, so EDITING the query must not silently re-wrap it.
+ * - `renderLimit` is a SCROLLING ARTIFACT that regrows on its own, so it always
+ *   rewinds: carrying a window inflated by earlier scrolling into a freshly
+ *   filtered set re-creates the very freeze windowing exists to prevent.
+ * CLEARING the filter resets both — an empty box means no filter, so the view
+ * starts fresh (that's the × / Escape, and equally backspacing to empty: same end
+ * state, so it gets the same treatment).
+ * Never call bare render()/renderEvents() from a filter handler — use these.
+ */
+function refilter() {
+  resetRenderLimit();
+  render();
+}
+function refilterFresh() {
+  resetFolding(); // rewinds the window too
+  render();
+}
+function refilterEventsFresh() {
+  resetEventFolding();
+  renderEvents();
+}
+
 function resetEventFolding() {
   eventPastLimitIdx = 0;
   eventUnfoldedDates.clear();
 }
+
+// The digest builds a DOM card per visible post, so a filter change that reveals
+// thousands at once (untoggling "Unread only") would freeze the page: read-day
+// folding only collapses days where EVERY post is read, so any day holding one
+// unread post renders all its read posts too. Render a bounded window instead
+// and extend it as the sentinel at the bottom scrolls into view.
+const RENDER_CHUNK = 150;
+let renderLimit = RENDER_CHUNK;
+function resetRenderLimit() {
+  renderLimit = RENDER_CHUNK;
+}
+
+const moreObserver = new IntersectionObserver(
+  (entries) => {
+    if (!entries.some((e) => e.isIntersecting)) return;
+    renderLimit += RENDER_CHUNK;
+    render();
+  },
+  { rootMargin: '800px' }, // start the next chunk before the user reaches the end
+);
 
 // Lazy-load avatar images only when their card scrolls into view.
 const avatarObserver = new IntersectionObserver(
@@ -237,7 +283,7 @@ function decodeEntities(s) {
 //   @handle           poster, reposter, or a repost's original author
 //   likes:>10         also >=, <, <=, = ; bare number means =
 //   replies:>5  reposts:>10
-//   is:read is:unread is:repost is:reply
+//   is:read is:unread is:liked is:repost is:reply
 //   has:media has:link
 //
 // A malformed query (unbalanced parens, stray operator) falls back to a plain
@@ -311,6 +357,7 @@ function termPredicate(tk) {
     case 'is':
       if (lower === 'read') return (c) => c.read;
       if (lower === 'unread') return (c) => !c.read;
+      if (lower === 'liked') return (c) => c.liked; // `-is:liked` for the inverse
       if (lower === 'repost') return (c) => c.isRepost;
       if (lower === 'reply') return (c) => c.isReply;
       return null;
@@ -436,6 +483,7 @@ function queryContext(t) {
     isRepost: !!orig || !!t.is_repost,
     isReply: !!t.reply_to,
     read: !!t.read,
+    liked: !!content.favorited, // same source as the ♥ on the card
     tier: t.category || 'none', // 'none' = not analyzed yet (the red-bordered cards)
   };
 }
@@ -583,13 +631,23 @@ function restoreScroll(a) {
   if (typeof a.y === 'number') window.scrollTo(0, a.y);
 }
 
+/**
+ * Is the timeline narrowed by a data-level filter — a query or Analyzed-only?
+ * (Unread-only is deliberately NOT included: it suppresses folding outright, so
+ * it never reaches the callers of this.) When true, a day holds only its matching
+ * posts, which changes both what the fold reveals and how its count reads.
+ */
+function filtering() {
+  return !!searchEl.value.trim() || analyzedOnly();
+}
+
 function render() {
   buildThreadIndex();
   const items = visiblePosts();
   const anchor = scrollAnchor();
 
   listEl
-    .querySelectorAll('.thread, .day-sep, .reading-line, .more-days')
+    .querySelectorAll('.thread, .day-sep, .reading-line, .more-days, .render-more, .fold-all')
     .forEach((n) => n.remove());
   avatarObserver.disconnect(); // drop observations on the cards we just removed
   emptyEl.style.display = items.length === 0 ? '' : 'none';
@@ -627,10 +685,16 @@ function render() {
     if (!t.read) d.allRead = false;
   }
 
-  // Fold fully-read days on the plain timeline view only (not while searching,
-  // not in Unread-only, not on Events). Hide read days beyond the current limit.
-  const folding =
-    activeTab === 'timeline' && !unreadOnly() && !analyzedOnly() && !searchEl.value.trim();
+  // Fold fully-read days on the timeline, under a filter as well as without one.
+  // The grouping above runs on the FILTERED items, so `allRead` and the header
+  // count describe the matches in that day and unfolding reveals only those —
+  // a filter narrows what's inside each date rather than flattening the dates.
+  // Only Unread-only suppresses folding, because there a fully-read day cannot
+  // exist and folding is therefore meaningless. (Analyzed-only must NOT suppress
+  // it: nearly every post is analyzed, so fully-read days very much still exist
+  // and must still collapse — gating on it left thousands of old read posts
+  // expanded, which was both wrong and the source of the slowdown.)
+  const folding = activeTab === 'timeline' && !unreadOnly();
   const hiddenKeys = new Set();
   if (folding) {
     const readDays = days.filter((d) => d.allRead);
@@ -651,18 +715,43 @@ function render() {
   let readingLinePlaced = false;
   let prevRead = null; // read-state of the previous rendered post (folded/hidden days count as read)
 
+  let emitted = 0;      // posts actually put in the DOM this pass
+  let truncated = false; // more remain beyond the current window
+
+  // The bulk unfold/fold control anchors to the FIRST foldable date header —
+  // foldable, not folded, so the button keeps its place when the state flips.
+  const foldableKeys = [];
+  let foldAnchor = null;
+  let anyFolded = false;
+
   for (const d of days) {
     if (hiddenKeys.has(d.key)) {
       prevRead = true;
       continue;
     }
-    const folded = folding && d.allRead && !unfoldedDays.has(d.key);
-    frag.appendChild(dayHeader(d, folded, folding && d.allRead));
+    // Check before the header so we never leave a dangling empty date.
+    if (emitted >= renderLimit) {
+      truncated = true;
+      break;
+    }
+    const foldable = folding && d.allRead;
+    const folded = foldable && !unfoldedDays.has(d.key);
+    const header = dayHeader(d, folded, foldable);
+    frag.appendChild(header);
+    if (foldable) {
+      foldableKeys.push(d.key);
+      if (!foldAnchor) foldAnchor = header;
+      if (folded) anyFolded = true;
+    }
     if (folded) {
       prevRead = true;
       continue;
     }
     for (const t of d.posts) {
+      if (emitted >= renderLimit) {
+        truncated = true;
+        break;
+      }
       // Reading line at the read/unread boundary (asc: first unread after read;
       // desc: first read after unread).
       const boundary = sortAsc ? !t.read && prevRead === true : t.read && prevRead === false;
@@ -675,13 +764,47 @@ function render() {
       appendThread(thread, t, 0, new Set());
       frag.appendChild(thread);
       prevRead = !!t.read;
+      emitted++;
     }
+    if (truncated) break;
+  }
+
+  // Sentinel: extends the window on scroll, and is clickable in case the
+  // observer never fires (very short list, unusual viewport).
+  if (truncated) {
+    const more = document.createElement('button');
+    more.className = 'render-more';
+    more.type = 'button';
+    more.textContent = `Showing ${emitted} of ${items.length} — scroll for more`;
+    more.addEventListener('click', () => {
+      renderLimit += RENDER_CHUNK;
+      render();
+    });
+    frag.appendChild(more);
+  }
+
+  // "▸ Unfold all dates below" — sits immediately above the first foldable date,
+  // which is where the folded region starts in BOTH sort orders (oldest-first
+  // puts the read days at the top, newest-first at the bottom), so the same
+  // placement rule reads correctly either way. It's a toggle rather than a
+  // one-way door: re-folding 200 dates one header at a time isn't a thing anyone
+  // should have to do. Unfolding everything is safe on a huge DB because
+  // `renderLimit` still caps what reaches the DOM.
+  if (foldAnchor) {
+    frag.insertBefore(
+      foldAllBtn(anyFolded, () => {
+        if (anyFolded) for (const k of foldableKeys) unfoldedDays.add(k);
+        else for (const k of foldableKeys) unfoldedDays.delete(k);
+        render();
+      }),
+      foldAnchor,
+    );
   }
 
   // "+" to reveal more folded read days — before the earliest shown date
   // (top when oldest-first, bottom when newest-first).
   if (hiddenKeys.size > 0) {
-    const btn = moreDatesBtn(hiddenKeys.size, 'read', () => {
+    const btn = moreDatesBtn(hiddenKeys.size, filtering() ? 'matching' : 'read', () => {
       if (readDayLimitIdx < READ_DAY_LIMITS.length - 1) readDayLimitIdx++;
       render();
     });
@@ -690,23 +813,33 @@ function render() {
   }
 
   listEl.appendChild(frag);
+  moreObserver.disconnect(); // the previous sentinel is gone
+  const sentinel = listEl.querySelector('.render-more');
+  if (sentinel) moreObserver.observe(sentinel);
   restoreScroll(anchor);
   renderEvents();
   updateStats(items.length);
 }
 
-// A date separator. When `foldable`, it shows a ▸/▾ arrow + read count and
-// toggles that day's folded state on click.
+/**
+ * "Monday 13 November", with the year appended when the date is not in the
+ * current year — otherwise an old entry reads as if it were recent.
+ */
+function dateLabel(when) {
+  const d = when instanceof Date ? when : new Date(when);
+  const opts = { weekday: 'long', day: 'numeric', month: 'long' };
+  if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric';
+  return d.toLocaleDateString('en-GB', opts);
+}
+
+// A date separator. When `foldable`, it shows a ▸/▾ arrow + a count of what the
+// fold contains, and toggles that day's folded state on click.
 function dayHeader(day, folded, foldable) {
   const el = document.createElement('div');
   el.className = 'day-sep' + (foldable ? ' foldable' : '');
   const mid = document.createElement('span');
   mid.className = 'day-sep-mid';
-  const label = new Date(day.ts).toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
+  const label = dateLabel(day.ts);
   if (foldable) {
     const arrow = document.createElement('span');
     arrow.className = 'fold-arrow';
@@ -715,7 +848,9 @@ function dayHeader(day, folded, foldable) {
     name.textContent = label;
     const count = document.createElement('span');
     count.className = 'day-count';
-    count.textContent = `${day.posts.length} read`;
+    // Under a filter the day holds only matches, so "read" would undersell it:
+    // the count is what unfolding will reveal.
+    count.textContent = `${day.posts.length} ${filtering() ? 'matching' : 'read'}`;
     mid.append(arrow, name, count);
     el.addEventListener('click', () => {
       if (unfoldedDays.has(day.key)) unfoldedDays.delete(day.key);
@@ -726,6 +861,20 @@ function dayHeader(day, folded, foldable) {
     mid.textContent = label;
   }
   el.appendChild(mid);
+  return el;
+}
+
+/**
+ * Bulk fold toggle for every foldable date in view. `unfold` picks the direction:
+ * true while any date is still folded, so the button offers the action that has
+ * something left to do.
+ */
+function foldAllBtn(unfold, onClick) {
+  const el = document.createElement('button');
+  el.className = 'fold-all';
+  el.type = 'button';
+  el.textContent = unfold ? '▸ Unfold all dates below' : '▾ Fold all dates below';
+  el.addEventListener('click', onClick);
   return el;
 }
 
@@ -949,11 +1098,7 @@ function pastDateHeader(d, folded) {
   arrow.className = 'fold-arrow';
   arrow.textContent = folded ? '▸' : '▾';
   const name = document.createElement('span');
-  name.textContent = new Date(`${d.key}T00:00:00`).toLocaleDateString('en-GB', {
-    weekday: 'long',
-    day: 'numeric',
-    month: 'long',
-  });
+  name.textContent = dateLabel(`${d.key}T00:00:00`);
   const count = document.createElement('span');
   count.className = 'day-count';
   count.textContent = `${d.events.length} event${d.events.length > 1 ? 's' : ''}`;
@@ -1047,13 +1192,16 @@ function jumpToPost(id) {
   if (t) unfoldedDays.add(dayKey(t.created_at));
   setTab('timeline');
   render();
-  // If the day is still hidden behind the read-day limit, grow the limit until
-  // the target actually renders (or we run out of days to reveal).
-  while (
-    !listEl.querySelector(`[data-id="${CSS.escape(id)}"]`) &&
-    readDayLimitIdx < READ_DAY_LIMITS.length - 1
-  ) {
-    readDayLimitIdx++;
+  // The target may be hidden behind the read-day limit OR beyond the rendered
+  // window. Grow both until the card exists; bounded, so a target that isn't in
+  // the filtered set at all can't spin.
+  const sel = `[data-id="${CSS.escape(id)}"]`;
+  for (let guard = 0; guard < 80 && !listEl.querySelector(sel); guard++) {
+    const canUnfold = readDayLimitIdx < READ_DAY_LIMITS.length - 1;
+    const canExtend = !!listEl.querySelector('.render-more');
+    if (!canUnfold && !canExtend) break;
+    if (canUnfold) readDayLimitIdx++;
+    if (canExtend) renderLimit += RENDER_CHUNK * 4; // jump in bigger strides
     render();
   }
   focusPost(id);
@@ -1992,7 +2140,8 @@ function updateSearchClear() {
 searchEl.addEventListener('input', () => {
   localStorage.setItem('bd-search', searchEl.value);
   updateSearchClear();
-  render();
+  if (searchEl.value) refilter();
+  else refilterFresh();
 });
 searchEl.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && searchEl.value) {
@@ -2043,43 +2192,41 @@ function clearSearch() {
   searchEl.value = '';
   localStorage.setItem('bd-search', '');
   updateSearchClear();
-  render();
+  refilterFresh();
 }
 onlyUnreadEl.addEventListener('click', () => {
   setUnreadOnly(!unreadOnly());
-  resetFolding(); // "reset when clicking Unread only"
-  render();
+  refilterFresh(); // "reset when clicking Unread only"
 });
 onlyAnalyzedEl.addEventListener('click', () => {
   setAnalyzedOnly(!analyzedOnly());
-  resetFolding();
-  render();
+  refilterFresh();
 });
 sortOrderEl.addEventListener('click', () => {
   sortAsc = !sortAsc;
   localStorage.setItem('bd-sort-asc', sortAsc ? '1' : '');
   sortOrderEl.textContent = sortLabel(sortAsc);
   focusExceptionId = null; // sort change drops the jumped-to exception
-  render();
+  refilter();
 });
 
 // Events-tab controls (own state; re-render just the events list).
 eventSearchEl.addEventListener('input', () => {
   localStorage.setItem('bd-event-search', eventSearchEl.value);
-  renderEvents();
+  if (eventSearchEl.value) renderEvents(); // editing keeps unwrapped past dates
+  else refilterEventsFresh();
 });
 eventUnhiddenEl.addEventListener('click', () => {
   const on = !eventUnhiddenOnly();
   eventUnhiddenEl.setAttribute('aria-pressed', on ? 'true' : 'false');
   localStorage.setItem('bd-event-unhidden', on ? '1' : '');
-  resetEventFolding(); // start the past section collapsed each time it's revealed
-  renderEvents();
+  refilterEventsFresh(); // start the past section collapsed each time it's revealed
 });
 eventSortEl.addEventListener('click', () => {
   eventSortAsc = !eventSortAsc;
   localStorage.setItem('bd-event-sort-asc', eventSortAsc ? '1' : '');
   eventSortEl.textContent = sortLabel(eventSortAsc);
-  renderEvents();
+  renderEvents(); // same set, different order: unwrapped past dates stay
 });
 document.getElementById('refresh').addEventListener('click', () => {
   focusExceptionId = null; // the Refresh button drops the jumped-to exception

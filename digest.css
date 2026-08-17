@@ -239,6 +239,38 @@ html, body {
 }
 .more-days:hover { background: var(--card); color: var(--ink); border-color: var(--ink-soft); }
 
+/* Bulk fold/unfold of every foldable date below it. Quieter than .more-days (a
+   dotted rule rather than a pill) so the date headers stay the louder elements. */
+.fold-all {
+  display: block;
+  margin: 4px auto 10px;
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted transparent;
+  color: var(--ink-soft);
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.fold-all:hover { color: var(--ink); border-bottom-color: var(--ink-soft); }
+
+/* Bottom-of-window sentinel: extends the rendered range as it scrolls into view
+   (clickable as a fallback if the observer never fires). */
+.render-more {
+  display: block;
+  margin: 14px auto 28px;
+  background: none;
+  border: 1px dashed var(--line);
+  color: var(--ink-soft);
+  border-radius: 999px;
+  padding: 7px 18px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.render-more:hover { background: var(--card); color: var(--ink); border-color: var(--ink-soft); }
+
 /* "Past events" separator in the Events tab (shown when "Unhidden only" is off) */
 .event-past-label {
   margin: 22px 0 8px;
