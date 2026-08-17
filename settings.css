@@ -87,3 +87,14 @@ textarea { resize: vertical; }
 .account-state { margin-left: auto; font-size: 12px; color: #7a7a72; font-weight: 400; }
 .account-body { padding: 4px 12px 14px; border-top: 1px solid #e3e0d8; }
 .account-body label { font-size: 12.5px; }
+
+.shortcuts code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #f0efe9;
+  border: 1px solid #e3e1d9;
+  border-radius: 4px;
+  padding: 1px 5px;
+  white-space: nowrap;
+}
+.hint code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 12px; }

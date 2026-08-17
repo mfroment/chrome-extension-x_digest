@@ -22,11 +22,24 @@ const emptyEl = document.getElementById('empty');
 const statsEl = document.getElementById('stats');
 const searchEl = document.getElementById('search');
 const onlyUnreadEl = document.getElementById('only-unread');
-// "Unread only" is a toggle button; state lives in aria-pressed.
+// "Unread only" stays a plain toggle button applied silently on top of the
+// query (state in aria-pressed), so the search box isn't cluttered by it.
+// `is:unread` / `is:read` also exist as query terms for combining in one
+// expression; the two simply AND together.
 const unreadOnly = () => onlyUnreadEl.getAttribute('aria-pressed') === 'true';
 function setUnreadOnly(on) {
   onlyUnreadEl.setAttribute('aria-pressed', on ? 'true' : 'false');
   localStorage.setItem('bd-only-unread', on ? '1' : '');
+}
+
+// "Analyzed only" works exactly like "Unread only": a silent toggle ANDed on top
+// of the query, hiding posts the pipeline hasn't processed yet (the red-bordered
+// cards). `tier:none` is the query-language equivalent of its inverse.
+const onlyAnalyzedEl = document.getElementById('only-analyzed');
+const analyzedOnly = () => onlyAnalyzedEl.getAttribute('aria-pressed') === 'true';
+function setAnalyzedOnly(on) {
+  onlyAnalyzedEl.setAttribute('aria-pressed', on ? 'true' : 'false');
+  localStorage.setItem('bd-only-analyzed', on ? '1' : '');
 }
 const sortOrderEl = document.getElementById('sort-order');
 const eventsEl = document.getElementById('events');
@@ -210,39 +223,249 @@ function decodeEntities(s) {
     .replace(/&amp;/g, '&');
 }
 
+// ---------------------------------------------------------------------------
+// Search query language
+//
+// Follows the field:value convention shared by GitHub / X / Gmail, so the syntax
+// transfers: implicit AND between terms, uppercase OR, parentheses, `-` to
+// negate, and comparisons inside the value (likes:>10).
+//
+//   word              matches anywhere (text, author, summary, theme, event)
+//   "quoted"          matches the post BODY only — never the summary/author/theme
+//   @handle           poster, reposter, or a repost's original author
+//   from:handle       same as @handle
+//   likes:>10         also >=, <, <=, = ; bare number means =
+//   replies:>5  reposts:>10
+//   is:read is:unread is:repost is:reply
+//   has:media has:link
+//
+// A malformed query (unbalanced parens, stray operator) falls back to a plain
+// substring match, so the box never "breaks" mid-typing.
+// ---------------------------------------------------------------------------
+
+const CMP = {
+  '>': (a, b) => a > b,
+  '>=': (a, b) => a >= b,
+  '<': (a, b) => a < b,
+  '<=': (a, b) => a <= b,
+  '=': (a, b) => a === b,
+};
+
+/** Split a query into typed tokens. `-` prefixes become a separate NOT token. */
+function tokenizeQuery(q) {
+  const out = [];
+  const re = /"([^"]*)"|([()])|([^\s()"]+)/g;
+  let m;
+  while ((m = re.exec(q))) {
+    if (m[1] !== undefined) {
+      out.push({ t: 'term', kind: 'phrase', v: m[1].toLowerCase() });
+    } else if (m[2]) {
+      out.push({ t: m[2] === '(' ? 'lp' : 'rp' });
+    } else {
+      let v = m[3];
+      while (v.startsWith('-') && v.length > 1) {
+        out.push({ t: 'not' });
+        v = v.slice(1);
+      }
+      out.push(classifyAtom(v));
+    }
+  }
+  return out;
+}
+
+function classifyAtom(v) {
+  const u = v.toUpperCase();
+  if (u === 'AND') return { t: 'and' };
+  if (u === 'OR') return { t: 'or' };
+  if (u === 'NOT') return { t: 'not' };
+  if (v.startsWith('@') && v.length > 1) {
+    return { t: 'term', kind: 'handle', v: v.slice(1).toLowerCase() };
+  }
+  const c = v.indexOf(':');
+  if (c > 0 && c < v.length - 1) {
+    return { t: 'term', kind: 'field', key: v.slice(0, c).toLowerCase(), val: v.slice(c + 1) };
+  }
+  return { t: 'term', kind: 'word', v: v.toLowerCase() };
+}
+
+/** Build a predicate over the per-post context (see queryContext). */
+function termPredicate(tk) {
+  if (tk.kind === 'phrase') return (c) => c.body.includes(tk.v); // body ONLY
+  if (tk.kind === 'word') return (c) => c.hay.includes(tk.v);
+  if (tk.kind === 'handle') return (c) => c.handles.some((h) => h.includes(tk.v));
+
+  const { key, val } = tk;
+  const num = (get) => {
+    const m = /^(>=|<=|>|<|=)?(\d+)$/.exec(val);
+    if (!m) return null;
+    const op = m[1] || '=';
+    const n = Number(m[2]);
+    return (c) => CMP[op](get(c), n);
+  };
+  const lower = val.toLowerCase();
+  switch (key) {
+    case 'likes': case 'like': case 'faves': return num((c) => c.likes);
+    case 'replies': case 'reply': return num((c) => c.replies);
+    case 'reposts': case 'repost': case 'rt': return num((c) => c.reposts);
+    case 'from': case 'author': return (c) => c.handles.some((h) => h.includes(lower));
+    case 'is':
+      if (lower === 'read') return (c) => c.read;
+      if (lower === 'unread') return (c) => !c.read;
+      if (lower === 'repost') return (c) => c.isRepost;
+      if (lower === 'reply') return (c) => c.isReply;
+      return null;
+    case 'has':
+      if (lower === 'media' || lower === 'image' || lower === 'images') return (c) => c.hasMedia;
+      if (lower === 'link' || lower === 'links') return (c) => c.hasLink;
+      return null;
+    case 'tier': case 'category': {
+      // Accept the internal names AND the wording the cards use (main/side/off),
+      // plus `none` for posts the pipeline hasn't analyzed yet.
+      const TIERS = {
+        full: 'full', main: 'full',
+        summary: 'summary', side: 'summary',
+        other: 'other', off: 'other', offtopic: 'other', 'off-topic': 'other',
+        none: 'none', unanalyzed: 'none', new: 'none',
+      };
+      const want = TIERS[lower];
+      return want ? (c) => c.tier === want : null;
+    }
+    default:
+      return null; // unknown field: caller falls back to a literal word match
+  }
+}
+
+/** Compile a query string into a predicate, or null if it can't be parsed. */
+function compileQuery(q) {
+  const toks = tokenizeQuery(q);
+  if (!toks.length) return null;
+  let pos = 0;
+  const peek = () => toks[pos];
+
+  function parseOr() {
+    let left = parseAnd();
+    while (peek()?.t === 'or') {
+      pos++;
+      const right = parseAnd();
+      const l = left;
+      left = (c) => l(c) || right(c);
+    }
+    return left;
+  }
+  function parseAnd() {
+    let left = parseNot();
+    for (;;) {
+      if (peek()?.t === 'and') pos++;
+      const nxt = peek();
+      if (!nxt || nxt.t === 'or' || nxt.t === 'rp') break;
+      const right = parseNot();
+      const l = left;
+      left = (c) => l(c) && right(c);
+    }
+    return left;
+  }
+  function parseNot() {
+    if (peek()?.t === 'not') {
+      pos++;
+      const inner = parseNot();
+      return (c) => !inner(c);
+    }
+    return parsePrimary();
+  }
+  function parsePrimary() {
+    const tk = peek();
+    if (!tk) throw new Error('unexpected end of query');
+    if (tk.t === 'lp') {
+      pos++;
+      const inner = parseOr();
+      if (peek()?.t !== 'rp') throw new Error('unbalanced parenthesis');
+      pos++;
+      return inner;
+    }
+    if (tk.t !== 'term') throw new Error(`unexpected ${tk.t}`);
+    pos++;
+    const pred = termPredicate(tk);
+    if (pred) return pred;
+    // Unknown field (e.g. "http://x" or "foo:bar") — match it literally.
+    const literal = (tk.kind === 'field' ? `${tk.key}:${tk.val}` : tk.v).toLowerCase();
+    return (c) => c.hay.includes(literal);
+  }
+
+  try {
+    const pred = parseOr();
+    if (pos !== toks.length) return null; // trailing junk, e.g. a stray ")"
+    return pred;
+  } catch {
+    return null;
+  }
+}
+
+// Compiling is cheap, but render() runs often — memoize the last query.
+let queryCache = { src: null, pred: null };
+function queryPredicate(q) {
+  if (queryCache.src !== q) queryCache = { src: q, pred: compileQuery(q) };
+  return queryCache.pred;
+}
+
+/** Everything a query term can look at, computed once per post. */
+function queryContext(t) {
+  const orig = t.repost_of ? byId.get(t.repost_of) : null;
+  const quoted = t.quoted_id ? byId.get(t.quoted_id) : null;
+  const content = orig || t; // counts/media come from the original on a repost
+  return {
+    // "quoted" terms search the rendered prose only — never summary/author/theme.
+    body: [t.text, orig?.text, quoted?.text].filter(Boolean).join('\n').toLowerCase(),
+    hay: [
+      t.text,
+      t.author_name,
+      t.screen_name,
+      `@${t.screen_name}`, // so a "@handle" query matches the poster/reposter
+      t.summary,
+      t.theme,
+      t.event?.name,
+      t.event?.venue,
+      orig?.text,
+      orig?.author_name,
+      orig?.screen_name, // repost: also match the ORIGINAL author (works when collapsed)
+      orig ? `@${orig.screen_name}` : null,
+      quoted?.text,
+    ]
+      .filter(Boolean)
+      .join('\n')
+      .toLowerCase(),
+    handles: [t.screen_name, orig?.screen_name].filter(Boolean).map((h) => h.toLowerCase()),
+    likes: content.favorite_count || 0,
+    replies: content.reply_count || 0,
+    reposts: content.repost_count || 0,
+    hasMedia: (content.media || []).length > 0,
+    hasLink: (content.urls || []).length > 0,
+    isRepost: !!orig || !!t.is_repost,
+    isReply: !!t.reply_to,
+    read: !!t.read,
+    tier: t.category || 'none', // 'none' = not analyzed yet (the red-bordered cards)
+  };
+}
+
 function visiblePosts() {
   // "nested" entries (quoted post / repost original) are not timeline entries:
   // they serve as reference data for rendering.
   let items = all.filter((t) => !t.nested && mine(t));
   items.sort((a, b) => (sortAsc ? a.created_at - b.created_at : b.created_at - a.created_at));
 
-  const q = searchEl.value.trim().toLowerCase();
+  const q = searchEl.value.trim();
   if (q) {
+    const pred = queryPredicate(q); // null when the query doesn't parse
+    const literal = q.toLowerCase();
     items = items.filter((t) => {
-      const orig = t.repost_of ? byId.get(t.repost_of) : null;
-      const quoted = t.quoted_id ? byId.get(t.quoted_id) : null;
-      const hay = [
-        t.text,
-        t.author_name,
-        t.screen_name,
-        `@${t.screen_name}`, // so a "@handle" query matches the poster/reposter
-        t.summary,
-        t.theme,
-        t.event?.name,
-        t.event?.venue,
-        orig?.text,
-        orig?.author_name,
-        orig?.screen_name, // repost: also match the ORIGINAL author (works when collapsed)
-        orig ? `@${orig.screen_name}` : null,
-        quoted?.text,
-      ]
-        .filter(Boolean)
-        .join('\n')
-        .toLowerCase();
-      return hay.includes(q);
+      if (t.id === focusExceptionId) return true; // a jumped-to post always shows
+      const c = queryContext(t);
+      return pred ? pred(c) : c.hay.includes(literal);
     });
   }
   if (unreadOnly()) items = items.filter((t) => !t.read || t.id === focusExceptionId);
+  if (analyzedOnly()) {
+    items = items.filter((t) => t.processed_at || t.id === focusExceptionId);
+  }
   return items;
 }
 
@@ -383,6 +606,10 @@ function render() {
         '<p>Open Settings (⚙ above), enable your account, then browse x.com to capture posts.</p>';
     } else if (searchEl.value.trim()) {
       emptyEl.innerHTML = '<p><strong>No posts match your search.</strong></p>';
+    } else if (analyzedOnly()) {
+      emptyEl.innerHTML =
+        "<p><strong>No analyzed posts match.</strong></p>" +
+        '<p>Turn off “Analyzed only”, or run ✨ Analyze.</p>';
     } else if (unreadOnly()) {
       emptyEl.innerHTML = "<p><strong>No unread posts.</strong></p><p>You're all caught up.</p>";
     } else {
@@ -408,7 +635,8 @@ function render() {
 
   // Fold fully-read days on the plain timeline view only (not while searching,
   // not in Unread-only, not on Events). Hide read days beyond the current limit.
-  const folding = activeTab === 'timeline' && !unreadOnly() && !searchEl.value.trim();
+  const folding =
+    activeTab === 'timeline' && !unreadOnly() && !analyzedOnly() && !searchEl.value.trim();
   const hiddenKeys = new Set();
   if (folding) {
     const readDays = days.filter((d) => d.allRead);
@@ -467,7 +695,7 @@ function render() {
   listEl.appendChild(frag);
   restoreScroll(anchor);
   renderEvents();
-  updateStats();
+  updateStats(items.length);
 }
 
 // A date separator. When `foldable`, it shows a ▸/▾ arrow + read count and
@@ -515,13 +743,26 @@ function moreDaysBtn(n) {
   return el;
 }
 
-function updateStats() {
+/**
+ * `shown` is how many posts the current filters actually display — the search
+ * query plus the Unread-only / Analyzed-only toggles. Always rendered as
+ * "N of M posts", filtered or not, so the readout never changes shape and the
+ * first number is always "what I'm looking at right now".
+ */
+function updateStats(shown) {
   const timeline = all.filter((t) => !t.nested && mine(t));
   const unread = timeline.filter((t) => !t.read).length;
   const pending = timeline.filter((t) => !t.processed_at).length;
+  const visible = shown === undefined ? timeline.length : shown;
+
   // The unread count is right-clickable: "Mark unread from date/time…".
   statsEl.textContent = '';
-  statsEl.appendChild(document.createTextNode(`${timeline.length} posts · `));
+  const matchEl = document.createElement('span');
+  matchEl.className = 'match-stat';
+  matchEl.textContent = `${visible}`;
+  matchEl.title = 'Posts currently shown (search + Unread only + Analyzed only)';
+  statsEl.appendChild(matchEl);
+  statsEl.appendChild(document.createTextNode(` of ${timeline.length} posts · `));
   const unreadEl = document.createElement('span');
   unreadEl.className = 'unread-stat';
   unreadEl.textContent = `${unread} unread`;
@@ -1819,6 +2060,11 @@ onlyUnreadEl.addEventListener('click', () => {
   resetFolding(); // "reset when clicking Unread only"
   render();
 });
+onlyAnalyzedEl.addEventListener('click', () => {
+  setAnalyzedOnly(!analyzedOnly());
+  resetFolding();
+  render();
+});
 sortOrderEl.addEventListener('click', () => {
   sortAsc = !sortAsc;
   localStorage.setItem('bd-sort-asc', sortAsc ? '1' : '');
@@ -1938,6 +2184,7 @@ accountEl.addEventListener('change', async () => {
 searchEl.value = localStorage.getItem('bd-search') || '';
 updateSearchClear();
 setUnreadOnly(localStorage.getItem('bd-only-unread') === '1');
+setAnalyzedOnly(localStorage.getItem('bd-only-analyzed') === '1');
 sortAsc = (localStorage.getItem('bd-sort-asc') ?? '1') === '1';
 sortOrderEl.textContent = sortAsc ? 'Oldest first' : 'Newest first';
 

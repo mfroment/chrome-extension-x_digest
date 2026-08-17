@@ -245,6 +245,50 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Search query language (v0.11.0)
+
+The timeline search box is now a query language, not a substring match — the
+volume of incoming posts made plain text search insufficient for filtering.
+Syntax deliberately follows the `field:value` convention shared by GitHub / X /
+Gmail so it transfers (the user's original proposal of a bare `>10` was dropped
+in favour of `likes:>10` for that reason).
+- Grammar (recursive descent in digest.js): implicit AND between terms, explicit
+  `AND`/`OR`, parentheses, `-`/`NOT` negation, `"quoted phrases"`.
+- Terms: bare word (matches the whole hay — text, author, summary, theme, event
+  name/venue), `"quoted"`, `@handle`, `from:handle`, `likes:`/`replies:`/
+  `reposts:` with `> >= < <= =` (bare number = equals), `is:read|unread|repost|
+  reply`, `has:media|link`, `tier:full|summary|other|none` (aliases
+  `main|side|off`; `none` = not analyzed yet, i.e. the red-bordered cards —
+  `category:` is accepted as a synonym of `tier:`).
+- **`"quotes"` search the post BODY only** — never the summary/author/theme.
+  That distinction is the whole point of the quoting rule; `body` and `hay` are
+  separate fields on the per-post `queryContext`.
+- Counts come from the ORIGINAL on a repost (`orig || t`), matching what the card
+  displays.
+- A query that doesn't parse (unbalanced parens mid-typing, stray operator)
+  returns `null` from `compileQuery` and the caller falls back to a plain
+  substring match — the box never breaks while you type.
+- `queryPredicate` memoizes the last compiled query since `render()` runs often.
+- The **Unread only** button stays a separate silent toggle ANDed on top (the
+  user explicitly chose not to have it clutter the box), even though `is:unread`
+  also exists as a term. `focusExceptionId` now bypasses the whole query, not
+  just the unread filter, so a jumped-to post always shows.
+- BEHAVIOUR CHANGE: an unquoted multi-word query used to be a literal phrase and
+  is now an AND of words. Quotes restore the old behaviour.
+- The header stat ALWAYS reads `N of M posts` — filtered or not, so the readout
+  never changes shape and the first number is always "what I'm looking at".
+  `render()` passes `items.length` to `updateStats(shown)`, so N reflects the
+  query AND both toggles, and is exactly the set the right-click bulk actions
+  operate on. `unread` / `to analyze` stay GLOBAL (they match the toolbar badge).
+- **Analyzed only** (`#only-analyzed`) is a second silent toggle built exactly
+  like Unread only — aria-pressed + `bd-only-analyzed` in localStorage, ANDed on
+  top of the query, `focusExceptionId` bypasses it, it suppresses read-day
+  folding, and it has its own empty-state message. It hides posts with no
+  `processed_at` (the red-bordered cards); `tier:none` is the query-language
+  expression of its inverse.
+- Syntax is documented in Settings → "Search syntax" and in the search box's
+  `title` tooltip. The Events tab search is unchanged (still substring).
+
 ## Fix: refresh-on-browse could PROMOTE a nested post (v0.10.12)
 
 Symptom: opening a quoted post on X (via "Open on X" → clicking the quote) made

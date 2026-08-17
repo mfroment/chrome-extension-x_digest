@@ -39,6 +39,37 @@
     </section>
 
     <section>
+      <h2>Search syntax</h2>
+      <p class="hint">The timeline search box takes a query, not just text. Terms are combined
+        with <strong>AND</strong> by default (write it or leave it out); use <strong>OR</strong>
+        and parentheses to group. The syntax follows the usual
+        <code>field:value</code> convention, so it should feel familiar.</p>
+      <table class="shortcuts">
+        <tbody>
+          <tr><th><code>hello</code></th><td>Matches anywhere — post text, author, summary, theme, event name or venue.</td></tr>
+          <tr><th><code>"hello world"</code></th><td>Quotes mean <strong>this text is in the post body</strong> — never the summary, author or theme.</td></tr>
+          <tr><th><code>@handle</code><br /><code>from:handle</code></th><td>The poster, the reposter, or a repost's original author.</td></tr>
+          <tr><th><code>likes:&gt;10</code></th><td>Also <code>&gt;=</code>, <code>&lt;</code>, <code>&lt;=</code>, <code>=</code>. A bare number means equals: <code>likes:20</code>.</td></tr>
+          <tr><th><code>replies:&gt;5</code><br /><code>reposts:&gt;10</code></th><td>Same comparisons, on the reply and repost counts.</td></tr>
+          <tr><th><code>is:read</code> <code>is:unread</code><br /><code>is:repost</code> <code>is:reply</code></th><td>Filter by state or kind of post.</td></tr>
+          <tr><th><code>has:media</code><br /><code>has:link</code></th><td>Only posts carrying an image/video, or a link.</td></tr>
+          <tr><th><code>tier:full</code> <code>tier:summary</code><br /><code>tier:other</code> <code>tier:none</code></th>
+            <td>Filter by how the analysis classified the post — full-detail, summary, off-theme,
+              or <code>none</code> for posts not analyzed yet (the red-bordered cards).
+              <code>main</code> / <code>side</code> / <code>off</code> work as aliases.</td></tr>
+          <tr><th><code>-term</code> / <code>NOT term</code></th><td>Exclude. Works on any term: <code>-@spammer</code>, <code>-is:repost</code>.</td></tr>
+        </tbody>
+      </table>
+      <p class="hint">Example: <code>(@alice OR @bob) likes:&gt;10 "hello world"</code> — posts from either
+        author, with more than 10 likes, whose body contains that phrase.
+        The <strong>Unread only</strong> and <strong>Analyzed only</strong> buttons are applied
+        on top of whatever you type, so they stay out of the query. The counter in the header
+        reads <code>N of M posts</code>, where N is what the filters currently leave showing —
+        the same set the right-click bulk actions act on. If a query can't be parsed (an unclosed bracket while you're
+        still typing), it falls back to a plain text search.</p>
+    </section>
+
+    <section>
       <h2>Right-click shortcuts</h2>
       <p class="hint">Several parts of the digest hide their less-frequent actions behind a
         right-click, to keep the interface light. Here is the full list.</p>

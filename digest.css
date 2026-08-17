@@ -66,6 +66,8 @@ html, body {
   text-underline-offset: 3px;
 }
 .stats .unread-stat:hover { text-decoration-color: rgba(255, 255, 255, 0.9); }
+/* Match count when a search/filter is active — the number you're scanning for. */
+.stats .match-stat { font-weight: 700; color: #fff; }
 
 /* thin white divider between brand items (title | account | count) */
 .sep { width: 1px; height: 16px; background: rgba(255, 255, 255, 0.35); flex: 0 0 auto; }
