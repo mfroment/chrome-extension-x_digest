@@ -233,7 +233,6 @@ function decodeEntities(s) {
 //   word              matches anywhere (text, author, summary, theme, event)
 //   "quoted"          matches the post BODY only — never the summary/author/theme
 //   @handle           poster, reposter, or a repost's original author
-//   from:handle       same as @handle
 //   likes:>10         also >=, <, <=, = ; bare number means =
 //   replies:>5  reposts:>10
 //   is:read is:unread is:repost is:reply
@@ -307,7 +306,6 @@ function termPredicate(tk) {
     case 'likes': case 'like': case 'faves': return num((c) => c.likes);
     case 'replies': case 'reply': return num((c) => c.replies);
     case 'reposts': case 'repost': case 'rt': return num((c) => c.reposts);
-    case 'from': case 'author': return (c) => c.handles.some((h) => h.includes(lower));
     case 'is':
       if (lower === 'read') return (c) => c.read;
       if (lower === 'unread') return (c) => !c.read;
@@ -318,17 +316,11 @@ function termPredicate(tk) {
       if (lower === 'media' || lower === 'image' || lower === 'images') return (c) => c.hasMedia;
       if (lower === 'link' || lower === 'links') return (c) => c.hasLink;
       return null;
-    case 'tier': case 'category': {
-      // Accept the internal names AND the wording the cards use (main/side/off),
-      // plus `none` for posts the pipeline hasn't analyzed yet.
-      const TIERS = {
-        full: 'full', main: 'full',
-        summary: 'summary', side: 'summary',
-        other: 'other', off: 'other', offtopic: 'other', 'off-topic': 'other',
-        none: 'none', unanalyzed: 'none', new: 'none',
-      };
-      const want = TIERS[lower];
-      return want ? (c) => c.tier === want : null;
+    case 'tier': {
+      // Exactly the four stored values, no aliases — one spelling per tier, so
+      // the vocabulary is precisely what the docs list. `none` = not analyzed yet.
+      const TIERS = new Set(['full', 'summary', 'other', 'none']);
+      return TIERS.has(lower) ? (c) => c.tier === lower : null;
     }
     default:
       return null; // unknown field: caller falls back to a literal word match

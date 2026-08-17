@@ -255,11 +255,12 @@ in favour of `likes:>10` for that reason).
 - Grammar (recursive descent in digest.js): implicit AND between terms, explicit
   `AND`/`OR`, parentheses, `-`/`NOT` negation, `"quoted phrases"`.
 - Terms: bare word (matches the whole hay — text, author, summary, theme, event
-  name/venue), `"quoted"`, `@handle`, `from:handle`, `likes:`/`replies:`/
+  name/venue), `"quoted"`, `@handle`, `likes:`/`replies:`/
   `reposts:` with `> >= < <= =` (bare number = equals), `is:read|unread|repost|
-  reply`, `has:media|link`, `tier:full|summary|other|none` (aliases
-  `main|side|off`; `none` = not analyzed yet, i.e. the red-bordered cards —
-  `category:` is accepted as a synonym of `tier:`).
+  reply`, `has:media|link`, `tier:full|summary|other|none` (`none` = not
+  analyzed yet, i.e. the red-bordered cards). Deliberately ONE spelling per
+  operator — no `from:`/`author:`/`category:` synonyms and no `main|side|off`
+  tier aliases, so the vocabulary is exactly what the docs list.
 - **`"quotes"` search the post BODY only** — never the summary/author/theme.
   That distinction is the whole point of the quoting rule; `body` and `hay` are
   separate fields on the per-post `queryContext`.
