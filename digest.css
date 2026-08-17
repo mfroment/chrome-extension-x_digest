@@ -159,15 +159,31 @@ html, body {
 /* Three kinds of control, three weights, so the topbar reads at a glance:
    filter toggles (pill, on/off) < sort switch (ghost) < actions (plain .btn). */
 
-/* Filters — Unread only / Analyzed only / Unhidden only. Pill-shaped and quiet
-   when off; the shared [aria-pressed="true"] rule fills them when on. */
+/* Filters — Unread only / Analyzed only / Unhidden only: pill-shaped, quiet when
+   off, filled when on.
+   The pressed state is spelled out here rather than inherited from the generic
+   .btn[aria-pressed="true"] rule above: that selector has the SAME specificity
+   as .btn.filter-btn, so whichever came later won — which blanked the label
+   (near-white text on the near-white filled pill). Ordering below is
+   deliberate: base, hover, pressed, pressed:hover, each beating the last. */
 .btn.filter-btn {
   border-radius: 999px;
   padding: 5px 13px;
   border-color: rgba(255, 255, 255, 0.22);
-  color: rgba(242, 244, 248, 0.8);
+  color: rgba(242, 244, 248, 0.82);
 }
-.btn.filter-btn:hover { color: #f2f4f8; border-color: rgba(255, 255, 255, 0.45); }
+.btn.filter-btn:hover {
+  color: #f2f4f8;
+  border-color: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.1);
+}
+.btn.filter-btn[aria-pressed="true"] {
+  background: #f2f4f8;
+  border-color: #f2f4f8;
+  color: var(--ink);
+  font-weight: 700;
+}
+.btn.filter-btn[aria-pressed="true"]:hover { background: #fff; color: var(--ink); }
 
 /* Sort — a mode switch, not a filter and not an action: no outline, just the
    arrow + label on a faint wash. */
