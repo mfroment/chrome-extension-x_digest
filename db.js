@@ -94,6 +94,44 @@ function tx(db, mode) {
 }
 
 /**
+ * Walk the posts store with a cursor. `visit(record)` inspects (and may mutate)
+ * each row; returning true means "this row matched" — the record is written back
+ * when the walk is writable, and its id collected. `index`/`range` narrow the
+ * scan so we only touch the rows we care about.
+ *
+ * Every scan below shares this skeleton and differs only in its predicate and
+ * what it changes. `collect: false` skips building the id list for count-only
+ * callers (countUnread runs on every badge refresh).
+ */
+async function walkPosts(visit, { index = null, range = null, write = true, collect = true } = {}) {
+  const db = await openDB();
+  const ids = [];
+  let count = 0;
+  await new Promise((resolve, reject) => {
+    const transaction = db.transaction(STORE, write ? 'readwrite' : 'readonly');
+    const store = transaction.objectStore(STORE);
+    const cursorReq = (index ? store.index(index) : store).openCursor(range);
+    cursorReq.onsuccess = () => {
+      const cursor = cursorReq.result;
+      if (!cursor) return;
+      const rec = cursor.value;
+      if (visit(rec) === true) {
+        if (write) cursor.update(rec);
+        if (collect) ids.push(rec.id);
+        count++;
+      }
+      cursor.continue();
+    };
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => reject(transaction.error);
+  });
+  return { ids, count };
+}
+
+/** Cursor options for the `read` index (0 = unread, 1 = read). */
+const READ = (v) => ({ index: 'read', range: IDBKeyRange.only(v) });
+
+/**
  * Insert or update a batch of posts captured under `accountId`.
  * - New post: read=0, captured_at=now, accounts=[accountId].
  * - Existing post: refresh counters, favorited, text, media… while preserving
@@ -193,22 +231,11 @@ export async function countUnread(accountIds) {
   // originals kept as reference data) are not shown in the digest list.
   const ids = new Set(accountIds || []);
   if (ids.size === 0) return 0;
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    let n = 0;
-    const cursorReq = tx(db, 'readonly').index('read').openCursor(IDBKeyRange.only(0));
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) {
-        resolve(n);
-        return;
-      }
-      const t = cursor.value;
-      if (!t.nested && (t.accounts || []).some((a) => ids.has(a))) n++;
-      cursor.continue();
-    };
-    cursorReq.onerror = () => reject(cursorReq.error);
-  });
+  const { count } = await walkPosts(
+    (t) => !t.nested && (t.accounts || []).some((a) => ids.has(a)),
+    { ...READ(0), write: false, collect: false },
+  );
+  return count;
 }
 
 /**
@@ -216,27 +243,12 @@ export async function countUnread(accountIds) {
  * (all accounts when accountId is falsy). Returns the ids actually flipped.
  */
 export async function markReadUpTo(threshold, accountId) {
-  const db = await openDB();
-  const ids = []; // the posts actually flipped (for undo)
-  await new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, 'readwrite');
-    const index = transaction.objectStore(STORE).index('read');
-    const cursorReq = index.openCursor(IDBKeyRange.only(0));
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) return;
-      const t = cursor.value;
-      if (t.created_at <= threshold && belongsTo(t, accountId)) {
-        t.read = 1;
-        cursor.update(t);
-        ids.push(t.id);
-      }
-      cursor.continue();
-    };
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  return ids;
+  const { ids } = await walkPosts((t) => {
+    if (t.created_at > threshold || !belongsTo(t, accountId)) return false;
+    t.read = 1;
+    return true;
+  }, READ(0));
+  return ids; // only the posts actually flipped, so undo restores exactly them
 }
 
 /**
@@ -418,27 +430,12 @@ export async function ensureEventGroups(todayISO, accountId) {
  * (all accounts when accountId is falsy). Returns the ids actually flipped.
  */
 export async function markUnreadSince(threshold, accountId) {
-  const db = await openDB();
-  const ids = [];
-  await new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, 'readwrite');
-    const index = transaction.objectStore(STORE).index('read');
-    const cursorReq = index.openCursor(IDBKeyRange.only(1));
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) return;
-      const t = cursor.value;
-      if (t.created_at >= threshold && belongsTo(t, accountId)) {
-        t.read = 0;
-        cursor.update(t);
-        ids.push(t.id);
-      }
-      cursor.continue();
-    };
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
-  });
-  return ids;
+  const { ids } = await walkPosts((t) => {
+    if (t.created_at < threshold || !belongsTo(t, accountId)) return false;
+    t.read = 0;
+    return true;
+  }, READ(1));
+  return ids; // only the posts actually flipped
 }
 
 /**
@@ -458,82 +455,44 @@ export async function clearAnalysis(
   accountId,
   { onlyOther = false, onlyUnread = false, onlyEvents = false, onlyIds = null } = {},
 ) {
-  const db = await openDB();
-  let n = 0;
-  await new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, 'readwrite');
-    const cursorReq = transaction.objectStore(STORE).openCursor();
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) return;
-      const t = cursor.value;
-      const match =
-        t.processed_at &&
-        belongsTo(t, accountId) &&
-        (!onlyOther || t.category === 'other') &&
-        (!onlyUnread || !t.read) &&
-        (!onlyEvents || !!t.event) &&
-        (!onlyIds || onlyIds.has(t.id));
-      if (match) {
-        delete t.processed_at;
-        delete t.category;
-        delete t.theme;
-        delete t.summary;
-        delete t.event;
-        delete t.event_group_id; // re-group from scratch; groupEvents prunes the orphan
-        cursor.update(t);
-        n++;
-      }
-      cursor.continue();
-    };
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+  const { count } = await walkPosts((t) => {
+    const match =
+      t.processed_at &&
+      belongsTo(t, accountId) &&
+      (!onlyOther || t.category === 'other') &&
+      (!onlyUnread || !t.read) &&
+      (!onlyEvents || !!t.event) &&
+      (!onlyIds || onlyIds.has(t.id));
+    if (!match) return false;
+    delete t.processed_at;
+    delete t.category;
+    delete t.theme;
+    delete t.summary;
+    delete t.event;
+    delete t.event_group_id; // re-group from scratch; groupEvents prunes the orphan
+    return true;
   });
-  return n;
+  return count;
 }
 
 /** Number of rows not yet attributed to any account (pre-v2 captures). */
 export async function countUntagged() {
-  const db = await openDB();
-  return new Promise((resolve, reject) => {
-    let n = 0;
-    const cursorReq = tx(db, 'readonly').openCursor();
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) {
-        resolve(n);
-        return;
-      }
-      if (!cursor.value.accounts || cursor.value.accounts.length === 0) n++;
-      cursor.continue();
-    };
-    cursorReq.onerror = () => reject(cursorReq.error);
+  const { count } = await walkPosts((t) => !t.accounts || t.accounts.length === 0, {
+    write: false,
+    collect: false,
   });
+  return count;
 }
 
 /** Attribute all untagged rows (pre-v2 captures) to `accountId`. Returns the count. */
 export async function assignUntagged(accountId) {
   if (!accountId) return 0;
-  const db = await openDB();
-  let n = 0;
-  await new Promise((resolve, reject) => {
-    const transaction = db.transaction(STORE, 'readwrite');
-    const cursorReq = transaction.objectStore(STORE).openCursor();
-    cursorReq.onsuccess = () => {
-      const cursor = cursorReq.result;
-      if (!cursor) return;
-      const t = cursor.value;
-      if (!t.accounts || t.accounts.length === 0) {
-        t.accounts = [accountId];
-        cursor.update(t);
-        n++;
-      }
-      cursor.continue();
-    };
-    transaction.oncomplete = () => resolve();
-    transaction.onerror = () => reject(transaction.error);
+  const { count } = await walkPosts((t) => {
+    if (t.accounts && t.accounts.length > 0) return false;
+    t.accounts = [accountId];
+    return true;
   });
-  return n;
+  return count;
 }
 
 /**

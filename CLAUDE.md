@@ -245,6 +245,27 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Cleanup pass + control styling (v0.11.2)
+
+- `db.js`: six functions (`countUnread`, `markReadUpTo`, `markUnreadSince`,
+  `clearAnalysis`, `countUntagged`, `assignUntagged`) were the same cursor walk
+  copy-pasted with a different predicate. They now share `walkPosts(visit, opts)`
+  — `visit(record)` returns true to mean "matched", the record is written back
+  when the walk is writable, and matching ids are collected. `READ(0|1)` is the
+  shorthand for scanning the `read` index. Count-only callers pass
+  `collect: false` so the badge refresh doesn't build a throwaway id array.
+  Export surface and every predicate are unchanged (verified by diffing exports
+  and re-deriving each predicate).
+- `digest.js`: `moreDaysBtn`/`morePastDatesBtn` were identical apart from a noun
+  and which counter they bump — now one `moreDatesBtn(n, noun, onMore)`.
+  `dayHeader`/`pastDateHeader` were deliberately LEFT separate: they render
+  different content (read count + conditional foldability vs event count), and
+  merging them would need more parameters than the duplication costs.
+- Topbar controls now read in three weights: filter toggles (`.filter-btn`,
+  pill, filled when pressed) < sort switch (`.sort-btn`, ghost) < actions (plain
+  `.btn`, unchanged). The sort label carries its direction: `↓ Oldest first` /
+  `↑ Newest first` via the shared `sortLabel(asc)`.
+
 ## Search query language (v0.11.0)
 
 The timeline search box is now a query language, not a substring match — the

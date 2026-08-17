@@ -42,6 +42,8 @@ function setAnalyzedOnly(on) {
   localStorage.setItem('bd-only-analyzed', on ? '1' : '');
 }
 const sortOrderEl = document.getElementById('sort-order');
+// Reading order label: ↓ = oldest first (time runs down the page), ↑ = newest first.
+const sortLabel = (asc) => (asc ? '↓ Oldest first' : '↑ Newest first');
 const eventsEl = document.getElementById('events');
 const eventsListEl = document.getElementById('events-list');
 const eventsEmptyEl = document.getElementById('events-empty');
@@ -679,7 +681,10 @@ function render() {
   // "+" to reveal more folded read days — before the earliest shown date
   // (top when oldest-first, bottom when newest-first).
   if (hiddenKeys.size > 0) {
-    const btn = moreDaysBtn(hiddenKeys.size);
+    const btn = moreDatesBtn(hiddenKeys.size, 'read', () => {
+      if (readDayLimitIdx < READ_DAY_LIMITS.length - 1) readDayLimitIdx++;
+      render();
+    });
     if (sortAsc) frag.insertBefore(btn, frag.firstChild);
     else frag.appendChild(btn);
   }
@@ -724,14 +729,15 @@ function dayHeader(day, folded, foldable) {
   return el;
 }
 
-function moreDaysBtn(n) {
+/**
+ * "+ show N older <noun> dates" — the staggered reveal used by both the
+ * timeline's folded read days and the Events tab's past dates.
+ */
+function moreDatesBtn(n, noun, onMore) {
   const el = document.createElement('button');
   el.className = 'more-days';
-  el.textContent = `+ show ${n} older read date${n > 1 ? 's' : ''}`;
-  el.addEventListener('click', () => {
-    if (readDayLimitIdx < READ_DAY_LIMITS.length - 1) readDayLimitIdx++;
-    render();
-  });
+  el.textContent = `+ show ${n} older ${noun} date${n > 1 ? 's' : ''}`;
+  el.addEventListener('click', onMore);
   return el;
 }
 
@@ -921,7 +927,10 @@ function buildPastEvents(past) {
   }
 
   if (hiddenCount > 0) {
-    const btn = morePastDatesBtn(hiddenCount);
+    const btn = moreDatesBtn(hiddenCount, 'past', () => {
+      if (eventPastLimitIdx < EVENT_PAST_LIMITS.length - 1) eventPastLimitIdx++;
+      renderEvents();
+    });
     // Older dates sit at the far (oldest) end: just after the label when
     // oldest-first, at the very bottom when newest-first.
     if (eventSortAsc) frag.insertBefore(btn, frag.childNodes[1] || null);
@@ -955,17 +964,6 @@ function pastDateHeader(d, folded) {
     renderEvents();
   });
   el.appendChild(mid);
-  return el;
-}
-
-function morePastDatesBtn(n) {
-  const el = document.createElement('button');
-  el.className = 'more-days';
-  el.textContent = `+ show ${n} older past date${n > 1 ? 's' : ''}`;
-  el.addEventListener('click', () => {
-    if (eventPastLimitIdx < EVENT_PAST_LIMITS.length - 1) eventPastLimitIdx++;
-    renderEvents();
-  });
   return el;
 }
 
@@ -2060,7 +2058,7 @@ onlyAnalyzedEl.addEventListener('click', () => {
 sortOrderEl.addEventListener('click', () => {
   sortAsc = !sortAsc;
   localStorage.setItem('bd-sort-asc', sortAsc ? '1' : '');
-  sortOrderEl.textContent = sortAsc ? 'Oldest first' : 'Newest first';
+  sortOrderEl.textContent = sortLabel(sortAsc);
   focusExceptionId = null; // sort change drops the jumped-to exception
   render();
 });
@@ -2080,7 +2078,7 @@ eventUnhiddenEl.addEventListener('click', () => {
 eventSortEl.addEventListener('click', () => {
   eventSortAsc = !eventSortAsc;
   localStorage.setItem('bd-event-sort-asc', eventSortAsc ? '1' : '');
-  eventSortEl.textContent = eventSortAsc ? 'Oldest first' : 'Newest first';
+  eventSortEl.textContent = sortLabel(eventSortAsc);
   renderEvents();
 });
 document.getElementById('refresh').addEventListener('click', () => {
@@ -2178,7 +2176,7 @@ updateSearchClear();
 setUnreadOnly(localStorage.getItem('bd-only-unread') === '1');
 setAnalyzedOnly(localStorage.getItem('bd-only-analyzed') === '1');
 sortAsc = (localStorage.getItem('bd-sort-asc') ?? '1') === '1';
-sortOrderEl.textContent = sortAsc ? 'Oldest first' : 'Newest first';
+sortOrderEl.textContent = sortLabel(sortAsc);
 
 eventSearchEl.value = localStorage.getItem('bd-event-search') || '';
 if (localStorage.getItem('bd-event-unhidden') !== null) {
@@ -2188,7 +2186,7 @@ if (localStorage.getItem('bd-event-unhidden') !== null) {
   );
 }
 eventSortAsc = (localStorage.getItem('bd-event-sort-asc') ?? '1') === '1';
-eventSortEl.textContent = eventSortAsc ? 'Oldest first' : 'Newest first';
+eventSortEl.textContent = sortLabel(eventSortAsc);
 
 setTab(localStorage.getItem('bd-tab') === 'events' ? 'events' : 'timeline');
 
