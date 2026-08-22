@@ -157,7 +157,9 @@ automates the scrolling.
   {frontier})`. Driver in `content.js` `runSync`: clicks the 2nd home tab
   (Following = chronological, by position so it's locale-independent), scrolls
   `window.scrollBy(0, innerHeight*2)` on a 1.5s tick (pacing from x_feed_search).
-- Override: right-click Sync -> `syncMenu` (presets: back 24h/3d/7d, or a
+- Override: right-click Sync -> `syncMenu` (oldest unread post — the
+  reading-driven floor, shown with its timestamp and omitted when nothing is
+  unread; then back 6h/24h; or a
   `syncDatePicker` datetime-local popover, interpreted in LOCAL time) -> passes
   `floorTs` to force a further-back run. After it completes, the boundary
   re-advances so the next default sync is incremental again.
@@ -805,6 +807,23 @@ v0.10.5 "copy emojis verbatim" translate rule.
   usable by anyone. LLM *output* (translations, summaries, extracted event
   fields) defaults to the **browser's locale language** and is a user setting on
   the settings page, never hard-coded.
+- **Dates are ISO, times are 24-hour**: `2026-08-10 15:55`. Two SEPARATE layers,
+  which look identical today and must not be merged:
+  - *Display* — `fmtDate()` / `fmtDateTime()` (digest.js, `fmt*` like the other
+    formatters): card timestamps, undo labels, sync overlay + menu, event dates
+    and ranges. Presentation only, restyle freely. Two readability exceptions
+    live here: `dateLabel()` keeps long-form SECTION TITLES for the timeline's
+    day separators ("Friday 24 August", year appended outside the current year),
+    and `fmtEventDate` prefixes the short weekday ("Sat 2025-09-13") because an
+    agenda entry is easier to place when you can see it lands on a weekend.
+  - *Data* — `isoDate()` is the canonical date KEY: `event.date`/`end_date` are
+    stored as these strings and compared against `todayISO` for what's upcoming.
+    Restyling it would silently break event grouping and every stored record, so
+    it has exactly two callers, both key comparisons. Same for `exportedAt`
+    (`toISOString()`, full ISO 8601) and the export filename's `localTimestamp()`.
+  Both display helpers build from LOCAL components, never `toISOString()` (UTC —
+  wrong day either side of midnight), and nothing user-facing uses
+  `toLocaleString`, whose browser-default locale can render 12-hour AM/PM.
 - Vanilla JS, ES modules, no build step, no external dependencies.
 - Everything stays local; the only planned network egress is the Anthropic API
   (step 2) and X itself.

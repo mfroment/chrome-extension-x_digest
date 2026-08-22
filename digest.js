@@ -1343,7 +1343,7 @@ function metaCluster(t, content) {
 
   const when = document.createElement('span');
   when.className = 'when';
-  when.textContent = fmtTime(t.created_at);
+  when.textContent = fmtDateTime(t.created_at);
 
   const likeBtn = document.createElement('button');
   likeBtn.className = `count like-btn ${content.favorited ? 'liked' : ''}`;
@@ -1607,7 +1607,7 @@ function readCheck(t) {
         onClick: async () => {
           const ids = await markReadUpTo(t.created_at, selectedAccount);
           pushUndo(
-            `mark ${plural(ids.length, 'post')} read up to ${fmtTime(t.created_at)}`,
+            `mark ${plural(ids.length, 'post')} read up to ${fmtDateTime(t.created_at)}`,
             ids.map((id) => ({ id, field: 'read', value: 0 })),
           );
           await load();
@@ -1917,35 +1917,51 @@ function postUrl(t) {
   return `https://x.com/${t.screen_name}/status/${t.id}`;
 }
 
-function fmtTime(ts) {
-  return new Date(ts).toLocaleString('en-GB', {
-    day: '2-digit',
-    month: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  });
+/* --- Display formatting -------------------------------------------------
+ * Dates render as ISO (YYYY-MM-DD) and times as 24-hour HH:MM throughout, so a
+ * timestamp never has to be disambiguated. Built from LOCAL components on
+ * purpose: toISOString() is UTC and would show the wrong day either side of
+ * midnight.
+ * These are PRESENTATION choices and may be restyled freely — deliberately kept
+ * apart from `isoDate()` below, which looks identical today but is a stored data
+ * format that must not drift. Two readability exceptions live here: `dateLabel()`
+ * keeps long-form section titles, and `fmtEventDate` prefixes the weekday.
+ */
+function fmtDate(d) {
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+function fmtDateTime(ts) {
+  const d = new Date(ts);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${fmtDate(d)} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
 
+// "Sat 2025-09-13" — ISO date, with the weekday kept: an agenda entry is much
+// easier to place when you can see it falls on a weekend.
 function fmtEventDate(iso) {
   const d = new Date(`${iso}T00:00:00`);
   if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' });
+  return `${d.toLocaleDateString('en-GB', { weekday: 'short' })} ${fmtDate(d)}`;
 }
 
-// Single day -> "Fri 14 Aug"; multi-day -> "14–16 Aug" / "14 Aug – 3 Sep".
+// Single day -> "Fri 2025-08-14"; multi-day -> "2025-08-14 – 2025-08-16". The old
+// same-month compaction ("14–16 Aug") is gone: it isn't ISO.
 function fmtEventRange(start, end) {
   if (!end || end === start) return fmtEventDate(start);
   const s = new Date(`${start}T00:00:00`);
   const e = new Date(`${end}T00:00:00`);
   if (Number.isNaN(s.getTime()) || Number.isNaN(e.getTime())) return fmtEventDate(start);
-  const sameMonth = s.getFullYear() === e.getFullYear() && s.getMonth() === e.getMonth();
-  if (sameMonth) {
-    return `${s.getDate()}–${e.getDate()} ${e.toLocaleDateString('en-GB', { month: 'short' })}`;
-  }
-  const opt = { day: 'numeric', month: 'short' };
-  return `${s.toLocaleDateString('en-GB', opt)} – ${e.toLocaleDateString('en-GB', opt)}`;
+  return `${fmtDate(s)} – ${fmtDate(e)}`;
 }
 
+/* --- Data format ---------------------------------------------------------
+ * The canonical date KEY: `event.date` / `end_date` are stored as these strings
+ * in the `events` store and compared for equality against `todayISO` to decide
+ * what is still upcoming. Changing it would silently break event grouping and
+ * every stored record, so it is NOT the display formatter above even though the
+ * two currently produce the same string — that duplication is the point.
+ */
 function isoDate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
@@ -2011,7 +2027,7 @@ async function startSync(floorTs) {
   syncStartCount = all.filter((t) => !t.nested && mine(t)).length;
   syncBtn.disabled = true;
   pipelineStatusEl.textContent = floorTs
-    ? `Sync: opening x.com (back to ${new Date(floorTs).toLocaleString()})…`
+    ? `Sync: opening x.com (back to ${fmtDateTime(floorTs)})…`
     : 'Sync: opening x.com…';
   try {
     const r = await chrome.runtime.sendMessage({
@@ -2038,20 +2054,37 @@ async function readSyncBoundary(accountId) {
 }
 
 async function syncMenu(x, y) {
-  const day = 86400000;
+  const hour = 3600000;
   const now = Date.now();
   const boundary = await readSyncBoundary(selectedAccount);
-  const label = boundary ? new Date(boundary).toLocaleString() : 'not set';
-  showContextMenu(x, y, [
-    { header: true, label: `Synced up to: ${label}` },
-    { label: '🔄 Sync back 24 hours', onClick: () => startSync(now - day) },
-    { label: '🔄 Sync back 3 days', onClick: () => startSync(now - 3 * day) },
-    { label: '🔄 Sync back 7 days', onClick: () => startSync(now - 7 * day) },
+  const label = boundary ? fmtDateTime(boundary) : 'not set';
+
+  // "Back to the oldest thing I haven't read" is the reading-driven floor: it
+  // fetches exactly the span still waiting to be read, whatever duration that is.
+  // Scanned rather than Math.min(...spread), which blows the stack on a big
+  // unread backlog. Offered only when something IS unread.
+  let oldestUnread = null;
+  for (const t of all) {
+    if (t.nested || !mine(t) || t.read) continue;
+    if (oldestUnread === null || t.created_at < oldestUnread) oldestUnread = t.created_at;
+  }
+
+  const items = [{ header: true, label: `Synced up to: ${label}` }];
+  if (oldestUnread !== null) {
+    items.push({
+      label: `🔄 Sync back to oldest unread (${fmtDateTime(oldestUnread)})`,
+      onClick: () => startSync(oldestUnread),
+    });
+  }
+  items.push(
+    { label: '🔄 Sync back 6 hours', onClick: () => startSync(now - 6 * hour) },
+    { label: '🔄 Sync back 24 hours', onClick: () => startSync(now - 24 * hour) },
     {
       label: '⏱ Sync back to date/time…',
       onClick: () => datePickerPopover(x, y, boundary, 'Sync from here', startSync),
     },
-  ]);
+  );
+  showContextMenu(x, y, items);
 }
 
 // Small popover with a datetime-local input (interpreted in local time, as X does).
@@ -2284,7 +2317,7 @@ async function markUnreadFrom(ts) {
   // so undo restores exactly those and never touches posts already unread.
   const ids = await markUnreadSince(ts, selectedAccount);
   pushUndo(
-    `mark ${plural(ids.length, 'post')} unread from ${fmtTime(ts)}`,
+    `mark ${plural(ids.length, 'post')} unread from ${fmtDateTime(ts)}`,
     ids.map((id) => ({ id, field: 'read', value: 1 })),
   );
   pipelineStatusEl.textContent = `${ids.length} posts marked unread.`;
