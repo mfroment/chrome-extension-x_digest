@@ -136,10 +136,16 @@ export async function runPipeline(settings, accountId, onProgress = () => {}, op
       const { post, base } = queue.shift();
       onProgress(`Extracting events… (${stats.processed}/${candidates.length})`);
       try {
-        const { summary, event } = await extractFull(settings, toInput(post));
+        const { summary, event, images_unavailable } = await extractFull(settings, toInput(post));
+        const extra = images_unavailable ? { images_unavailable: true } : {};
         await saveLLMResults(
-          new Map([[post.id, { ...base, summary, event, processed_at: now }]]),
+          new Map([[post.id, { ...base, summary, event, ...extra, processed_at: now }]]),
         );
+        if (images_unavailable) {
+          // Processed, but from text alone — worth surfacing, since a flyer's
+          // date/venue may be missing from the result.
+          errors.push(`extraction (${post.id}): images unavailable, analyzed from text only`);
+        }
         stats.full++;
         stats.processed++;
       } catch (e) {

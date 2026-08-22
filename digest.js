@@ -1530,6 +1530,17 @@ function postCard(t, depth = 0) {
       img.loading = 'lazy';
       img.src = `${m.url}?name=small`;
       img.alt = m.type;
+      // X media can vanish (deleted post, rotated URL) — the same thing that
+      // makes extraction fall back to text-only. Show a muted placeholder
+      // instead of the browser's broken-image icon: a thumbnail that silently
+      // disappeared would make the post look like it never had media.
+      img.addEventListener('error', () => {
+        const gone = document.createElement('span');
+        gone.className = 'media-gone';
+        gone.textContent = `${m.type === 'photo' ? 'Image' : 'Video'} no longer available`;
+        a.replaceChildren(gone);
+        a.removeAttribute('href'); // the target is gone too, so don't offer the click
+      });
       a.appendChild(img);
       if (m.type !== 'photo') {
         const play = document.createElement('span');

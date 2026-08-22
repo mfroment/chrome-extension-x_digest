@@ -393,6 +393,23 @@ html, body {
   border: 1px solid var(--line);
   display: block;
 }
+/* Stands in for media X no longer serves. Matches the thumbnail height so the
+   card doesn't reflow, and reads as absent rather than broken. */
+.media-gone {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 130px;
+  padding: 0 14px;
+  box-sizing: border-box;
+  border: 1px dashed var(--line);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  font-style: italic;
+  text-align: center;
+}
+
 .media .play {
   position: absolute;
   inset: 0;

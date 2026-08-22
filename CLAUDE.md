@@ -247,6 +247,35 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Dead X media: text-only fallback + placeholder (v0.11.7)
+
+A full-detail post failed every Analyze run with `API 400: Unable to download
+the file` — the media had been deleted from X (broken on the card AND on x.com),
+and the Messages API downloads image URLs SERVER-SIDE, so an unfetchable URL
+failed the whole call and the post stayed unprocessed forever, retrying and
+failing on each run.
+- `llm.js`: `extractFull` and `translatePost` build their content via a local
+  `call(withImages)` and retry ONCE without images when the error matches
+  `IMAGE_UNFETCHABLE` (`unable to download|failed to download/fetch`). Any other
+  API error still propagates. A text-only analysis beats none.
+- The degradation is NOT silent: `extractFull` returns `images_unavailable: true`,
+  `pipeline` persists it (added to `PROTECTED_FIELDS`) and pushes
+  `images unavailable, analyzed from text only` into the run's `errors`, which
+  reach the console and the status element's `title`. This matters because a
+  flyer often carries the only date/venue, so such an extraction can be thinner
+  than a real full-detail one.
+- `digest.js`/`digest.css`: an `error` listener on each thumbnail swaps the
+  browser's broken-image icon for a `.media-gone` placeholder ("Image/Video no
+  longer available"), same 130px height so the card doesn't reflow, and drops the
+  `href` (it pointed at the same dead URL). Render-time, so it fixes already-
+  captured dead media with no re-capture.
+- DEBUGGING NOTE: pipeline errors already surface in two places — `console.warn`
+  on the digest page and the pipeline status element's tooltip. The prefix names
+  the stage: `classification:` / `summaries:` / `extraction (<post id>):`.
+  Classification and summaries fail in BATCHES (50 / 30), so a single failing
+  post points at extraction. `tier:none` finds the never-analyzed posts, and
+  right-click the search box → "↻ Re-analyze N matching posts" re-runs just them.
+
 ## Cleanup pass + control styling (v0.11.2)
 
 - `db.js`: six functions (`countUnread`, `markReadUpTo`, `markUnreadSince`,

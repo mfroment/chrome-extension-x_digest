@@ -228,6 +228,16 @@ export async function summarizeBatch(settings, posts, { retry = true } = {}) {
   return map;
 }
 
+/**
+ * The API downloads image URLs server-side, so an X media URL that has gone away
+ * (deleted post, rotated URL) or that the fetcher is refused fails the WHOLE
+ * call — which left the post permanently unanalyzed, retried and failing on
+ * every subsequent run. Calls that send images retry once without them: a
+ * text-only analysis is worth far more than none, and the caller is told the
+ * images were skipped so the degradation isn't silent.
+ */
+const IMAGE_UNFETCHABLE = /unable to download|failed to (?:download|fetch)/i;
+
 // ---------------------------------------------------------------------------
 // Full-detail extraction (per post, with flyer images)
 // ---------------------------------------------------------------------------
@@ -292,21 +302,30 @@ export async function extractFull(settings, post) {
     'post (optionally adding a reading or translation in parentheses). Everything ' +
     `else you write, the summary above all, is in ${settings.language}.`;
 
-  const content = [];
-  for (const url of (post.images || []).slice(0, 4)) {
-    content.push({ type: 'image', source: { type: 'url', url } });
+  const images = (post.images || []).slice(0, 4);
+  const call = async (withImages) => {
+    const content = withImages
+      ? images.map((url) => ({ type: 'image', source: { type: 'url', url } }))
+      : [];
+    content.push({ type: 'text', text: `@${post.author}:\n${post.text}` });
+    const response = await apiCall(settings, {
+      model: settings.model,
+      max_tokens: 2000,
+      system,
+      output_config: { format: { type: 'json_schema', schema: extractSchema(settings.language) } },
+      messages: [{ role: 'user', content }],
+    });
+    return JSON.parse(firstText(response));
+  };
+
+  try {
+    return await call(true);
+  } catch (e) {
+    if (!images.length || !IMAGE_UNFETCHABLE.test(e.message)) throw e;
+    // Text only. The flyer often carried the date/venue, so flag it: the result
+    // may be thinner than a normal full-detail extraction.
+    return { ...(await call(false)), images_unavailable: true };
   }
-  content.push({ type: 'text', text: `@${post.author}:\n${post.text}` });
-
-  const response = await apiCall(settings, {
-    model: settings.model,
-    max_tokens: 2000,
-    system,
-    output_config: { format: { type: 'json_schema', schema: extractSchema(settings.language) } },
-    messages: [{ role: 'user', content }],
-  });
-
-  return JSON.parse(firstText(response));
 }
 
 // ---------------------------------------------------------------------------
@@ -327,20 +346,27 @@ export async function translatePost(settings, post) {
     'schedules), add a section transcribing their key information in the target language.' +
     languageRule(settings.language);
 
-  const content = [];
-  for (const url of (post.images || []).slice(0, 4)) {
-    content.push({ type: 'image', source: { type: 'url', url } });
+  const images = (post.images || []).slice(0, 4);
+  const call = async (withImages) => {
+    const content = withImages
+      ? images.map((url) => ({ type: 'image', source: { type: 'url', url } }))
+      : [];
+    content.push({ type: 'text', text: `@${post.author}:\n${post.text}` });
+    const response = await apiCall(settings, {
+      model: settings.model,
+      max_tokens: 2000,
+      system,
+      messages: [{ role: 'user', content }],
+    });
+    return firstText(response).trim();
+  };
+
+  try {
+    return await call(true);
+  } catch (e) {
+    if (!images.length || !IMAGE_UNFETCHABLE.test(e.message)) throw e;
+    return await call(false); // translate the text rather than failing outright
   }
-  content.push({ type: 'text', text: `@${post.author}:\n${post.text}` });
-
-  const response = await apiCall(settings, {
-    model: settings.model,
-    max_tokens: 2000,
-    system,
-    messages: [{ role: 'user', content }],
-  });
-
-  return firstText(response).trim();
 }
 
 // ---------------------------------------------------------------------------

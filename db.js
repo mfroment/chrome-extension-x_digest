@@ -23,6 +23,7 @@ const PROTECTED_FIELDS = [
   'processed_at',  // timestamp of the LLM pipeline run
   'event_hidden',  // legacy per-post hide (v4 migrates flags to the event group)
   'event_group_id',// v4: the event group this post's event belongs to
+  'images_unavailable', // extraction fell back to text: the API could not fetch the media
 ];
 
 let dbPromise = null;
