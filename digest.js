@@ -233,8 +233,12 @@ async function undoLast() {
   const entry = undoStack.pop();
   if (!entry) return;
   await applyFieldUpdates(entry.changes);
+  applyLocal(entry.changes.filter((c) => c.store !== 'events'));
   updateUndoBtn();
-  await load(); // reload + re-render (covers both the timeline and events)
+  // Only an event-flag undo needs anything re-read, and just the events store —
+  // never the 20k posts.
+  if (entry.changes.some((c) => c.store === 'events')) eventGroups = await getEvents();
+  render();
 }
 
 // ---------------------------------------------------------------------------
@@ -247,19 +251,35 @@ async function load() {
   // hold &amp;/&lt;/&gt; in their text; decode for display and search.
   for (const t of all) t.text = decodeEntities(t.text);
   byId = new Map(all.map((t) => [t.id, t]));
-  await refreshEventGroups();
-  resetFolding();
+  await refreshEventGroups(all);
   render();
+}
+
+/**
+ * Mirror a DB write we just made into the in-memory records, instead of calling
+ * load() to re-read the whole store to learn what we already know. `all` and
+ * `byId` hold the SAME objects, so one assignment updates both.
+ * At 20k posts a load() costs two full getAll() passes (its own, plus the one
+ * inside ensureEventGroups) — about a second — which is why marking a single
+ * post read used to freeze the page. Read-state changes now cost a render().
+ */
+function applyLocal(updates) {
+  for (const u of updates) {
+    const t = byId.get(u.id);
+    if (t) t[u.field] = u.value;
+  }
 }
 
 // Cheap (no-LLM) singleton backfill so the Events tab is populated immediately —
 // including legacy events right after the v4 upgrade, before any Analyze. The
 // LLM clustering that merges duplicates runs during Analyze.
-async function refreshEventGroups() {
+async function refreshEventGroups(posts) {
   if (selectedAccount) {
     const d = new Date();
     d.setHours(0, 0, 0, 0);
-    await ensureEventGroups(isoDate(d), selectedAccount);
+    // Hand over the posts we just read: ensureEventGroups would otherwise run
+    // its own getAll(), doubling the cost of every load().
+    await ensureEventGroups(isoDate(d), selectedAccount, posts);
   }
   eventGroups = await getEvents();
 }
@@ -1604,10 +1624,11 @@ function readCheck(t) {
     e.stopPropagation(); // don't expand a collapsed row
     const prev = t.read ? 1 : 0;
     await toggleRead(t.id);
+    applyLocal([{ id: t.id, field: 'read', value: prev ? 0 : 1 }]);
     pushUndo(prev ? 'mark this post unread' : 'mark this post read', [
       { id: t.id, field: 'read', value: prev },
     ]);
-    await load();
+    render();
   });
   check.addEventListener('contextmenu', (e) => {
     e.preventDefault();
@@ -1617,11 +1638,12 @@ function readCheck(t) {
         label: '✓ Read up to here',
         onClick: async () => {
           const ids = await markReadUpTo(t.created_at, selectedAccount);
+          applyLocal(ids.map((id) => ({ id, field: 'read', value: 1 })));
           pushUndo(
             `mark ${plural(ids.length, 'post')} read up to ${fmtDateTime(t.created_at)}`,
             ids.map((id) => ({ id, field: 'read', value: 0 })),
           );
-          await load();
+          render();
         },
       },
     ]);
@@ -2211,12 +2233,14 @@ searchEl.addEventListener('contextmenu', (e) => {
       label: `✓ Mark ${n} matching post${n > 1 ? 's' : ''} read`,
       onClick: async () => {
         const ids = unread.map((t) => t.id);
-        await applyFieldUpdates(ids.map((id) => ({ id, field: 'read', value: 1 })));
+        const updates = ids.map((id) => ({ id, field: 'read', value: 1 }));
+        await applyFieldUpdates(updates);
+        applyLocal(updates);
         pushUndo(
           `mark ${plural(n, 'post')} read matching "${q}"`,
           ids.map((id) => ({ id, field: 'read', value: 0 })),
         );
-        await load();
+        render();
       },
     });
   }
@@ -2327,12 +2351,13 @@ async function markUnreadFrom(ts) {
   // markUnreadSince returns ONLY the posts it actually flipped read -> unread,
   // so undo restores exactly those and never touches posts already unread.
   const ids = await markUnreadSince(ts, selectedAccount);
+  applyLocal(ids.map((id) => ({ id, field: 'read', value: 0 })));
   pushUndo(
     `mark ${plural(ids.length, 'post')} unread from ${fmtDateTime(ts)}`,
     ids.map((id) => ({ id, field: 'read', value: 1 })),
   );
   pipelineStatusEl.textContent = `${ids.length} posts marked unread.`;
-  await load();
+  render();
 }
 
 undoBtn.addEventListener('click', undoLast);
@@ -2357,7 +2382,10 @@ accountEl.addEventListener('change', async () => {
   resetEventFolding();
   undoStack.length = 0;
   updateUndoBtn();
-  await refreshEventGroups(); // ensure/singleton-backfill for the newly selected account
+  // Backfill singleton groups for the newly selected account. `all` spans every
+  // account (mine() filters at render), so it's already in memory — pass it
+  // rather than paying another full getAll().
+  await refreshEventGroups(all);
   render();
 });
 

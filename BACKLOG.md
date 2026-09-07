@@ -58,6 +58,14 @@ in the `all` array for the page's lifetime; every `render()` scans it.
   it all starts to slow the digest *open* (memory + `getAll` latency).
 - Read-day folding (v0.8.0) + lazy avatars only bound the **DOM**, not the data.
   DOM windowing (built in v0.11.5, item 3 below) also only bounds the DOM.
+- MEASUREMENT (2026-09-07, ~20k posts): a single `getAllPosts()` + the JS work
+  over it is roughly 0.5s, and `load()` was doing TWO of them (v0.11.8 fixed the
+  duplicate and stopped read-state writes from reloading at all). So the ceiling
+  is real and is the IndexedDB read, NOT the in-memory computation over `all` —
+  entity decode + `byId` + `buildThreadIndex` + filter/sort + stats measure ~30ms
+  combined at 20k. Item 1 below is therefore about DIGEST OPEN time (one
+  unavoidable read at startup) rather than per-interaction cost, which v0.11.8
+  removed. Re-measure open time before acting.
 - CALIBRATION (2026-08-17): the slowdown reported as "the DB has grown to the
   extent that untoggling Unread only has a huge performance impact" turned out to
   be a **v0.11.2 regression, not this item** — a stray `&& !analyzedOnly()` on the

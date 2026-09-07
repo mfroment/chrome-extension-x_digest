@@ -247,6 +247,34 @@ accounts, worded differently) collapse into one, and flags attach to the event.
   (cheap way to backfill `end_date`/future event fields), then re-clusters; the
   thousands of tier-3 posts are untouched.
 
+## Mark-read without reloading the DB (v0.11.8)
+
+At ~20k posts, marking ONE post read took ~1s. Cause: every read-state write
+ended in `await load()`, and `load()` read the entire store TWICE — its own
+`getAllPosts()`, plus a second one inside `ensureEventGroups()`. Two full
+deserializations of every record to learn one bit we had just written ourselves.
+(Measured for scale: the pure JS per-load work — entity decoding, the `byId`
+Map, `buildThreadIndex`, filter+sort, stats — totals only ~30ms at 20k. The cost
+is the IndexedDB reads, not the computation over them.)
+- `applyLocal(updates)` mirrors a write we just made into the in-memory records.
+  `all` and `byId` hold the SAME objects, so one assignment updates both. Every
+  read-state path now does DB write → `applyLocal` → `render()`, with no reload:
+  the ✓ toggle, "Read up to here", "Mark N matching read", "Mark unread from…",
+  and undo. Undo re-reads ONLY the events store, and only when the entry actually
+  contains an event flag.
+- `ensureEventGroups(todayISO, accountId, posts = null)` accepts the caller's
+  already-loaded posts; `refreshEventGroups(posts)` passes them from both `load()`
+  and the account switch. `pipeline.groupEvents` is unaffected (still passes
+  nothing, still does its own read). This halves every REMAINING load() —
+  Analyze, Refresh, Sync, import — which are genuine reloads and stay.
+- `load()` no longer calls `resetFolding()`. That contradicted the v0.11.5 rule
+  above ("filter change → `refilter*()`, everything else → `render()`"): Analyze /
+  Refresh / Sync / mark-read must PRESERVE fold state and the render window, and
+  resetting rewound `renderLimit` to 150 under a user who had scrolled far. The
+  two places that genuinely want a fresh view — first paint (defaults are already
+  fresh) and the account switch (explicit `resetFolding()` + `resetEventFolding()`)
+  — are unaffected.
+
 ## Dead X media: text-only fallback + placeholder (v0.11.7)
 
 A full-detail post failed every Analyze run with `API 400: Unable to download

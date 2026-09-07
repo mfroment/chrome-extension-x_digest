@@ -391,8 +391,10 @@ async function updateRecordIn(storeName, id, mutate) {
  * for the v3->v4 backfill and to seed newly-extracted events before clustering.
  * Legacy per-post `event_hidden` seeds the group's flag. Returns created count.
  */
-export async function ensureEventGroups(todayISO, accountId) {
-  const [all, events] = await Promise.all([getAllPosts(), getEvents()]);
+export async function ensureEventGroups(todayISO, accountId, posts = null) {
+  // `posts` lets a caller that already holds every record (the digest's load())
+  // skip a second full getAll() — the dominant cost at 20k+ posts.
+  const [all, events] = await Promise.all([posts ? posts : getAllPosts(), getEvents()]);
   const grouped = new Set(events.map((e) => e.id));
   const newGroups = [];
   const postUpdates = [];
