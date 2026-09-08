@@ -105,7 +105,7 @@ html, body {
 #search::placeholder, #event-search::placeholder { color: rgba(255, 255, 255, 0.55); }
 #search:focus, #event-search:focus { outline: 2px solid var(--lantern); outline-offset: 1px; }
 
-/* custom clear (×) button for the timeline search */
+/* custom clear (×) button for the timeline search; right-click opens bookmarks */
 .search-wrap { position: relative; display: inline-flex; align-items: center; }
 .search-wrap #search { padding-right: 28px; }
 .search-clear {
@@ -788,6 +788,70 @@ a.action { text-decoration: none; }
   cursor: pointer;
 }
 .ctx-item:hover { background: var(--paper); }
+/* The row matching the query currently in the box. */
+.ctx-item.is-current { font-weight: 700; color: var(--ink); }
+.ctx-item:disabled { color: var(--ink-soft); cursor: default; }
+.ctx-item:disabled:hover { background: none; }
+.ctx-sep { height: 1px; margin: 4px 0; border: 0; background: var(--line); }
+/* Scrolling region for a long menu list (bookmarked searches). ~10 rows, so the
+   entries above it — "Bookmark this search" and the header — never scroll away.
+   `contain` keeps the wheel from falling through to the digest behind it. */
+.ctx-scroll {
+  max-height: 290px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+/* A context item with its own remove (×) affordance — bookmarked searches. */
+.ctx-row { display: flex; align-items: stretch; gap: 2px; }
+/* Bookmark rows reorder by dragging their grip. */
+.ctx-handle {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: 0 2px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  line-height: 1;
+  cursor: grab;
+  user-select: none;
+}
+.ctx-handle:active { cursor: grabbing; }
+.ctx-row.dragging { opacity: 0.4; }
+.ctx-row.drop-target { outline: 2px solid var(--lantern); outline-offset: -2px; border-radius: 5px; }
+/* The header keeps its rule, but the rule now spans the row incl. its × */
+.ctx-header-row {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: 3px;
+}
+.ctx-header-row .ctx-header {
+  flex: 1;
+  min-width: 0;
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.ctx-row .ctx-item {
+  flex: 1;
+  min-width: 0;
+  max-width: 320px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+.ctx-remove {
+  flex: none;
+  width: 22px;
+  background: none;
+  border: none;
+  border-radius: 5px;
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ctx-remove:hover { background: var(--paper); color: var(--ink); }
 .ctx-header {
   padding: 6px 10px 5px;
   font-size: 11.5px;

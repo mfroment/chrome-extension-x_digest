@@ -405,6 +405,56 @@ DB. Two causes, both now fixed:
   is for. The rule is "filter change → `refilter*()`, everything else →
   `render()`", never "always reset".
 
+## Bookmarked searches (v0.12.0, branch `search-bookmarks`)
+
+Curated saved searches, reached by RIGHT-CLICKING the search box's × button.
+This replaces the automatic "last 5 searches" history that was built and rolled
+back in v0.11.0 — the user's objection was that it accumulated noise nobody
+chose. Bookmarks are explicit, so nothing appears unless it was saved.
+- Menu shape, constant between openings: `☆ Bookmark this search` (GREYED via the
+  new `disabled` item option when the box is empty, the query is already saved,
+  or the query DOESN'T PARSE — `queryPredicate(q)` is null there; the box still
+  falls back to a substring match so it never breaks mid-typing, but a half-typed
+  query isn't worth saving). The label carries the reason ("★ Already
+  bookmarked" / "☆ Invalid query — cannot bookmark") because a disabled button
+  shows no tooltip) → separator → `Bookmarked searches`
+  header → one row per bookmark, newest first. The row matching the query in the
+  box is shown BOLD rather than starred (`current` item option): the ☆/★ on the
+  top item already carries that state, so a second star would say it twice.
+- Removal at both scales: each row has its own × (`onRemove`), and the HEADER
+  carries an × that clears all, behind a `confirm()` — bookmarks live in
+  localStorage, outside the undo stack, so a bulk delete is unrecoverable.
+- Rows REORDER by drag and drop (`enableBookmarkReorder`). The rows in DOM order
+  are exactly the stored list in order, so a row's position is its index;
+  dropping onto row `to` moves the dragged entry into that slot. The drag starts
+  from a `.ctx-handle` grip, NOT the row: a row is covered edge to edge by two
+  `<button>`s, and Chrome consumes mousedown on a button for activation rather
+  than starting the draggable ancestor's drag — `draggable` on the row alone
+  silently did nothing (first attempt shipped that way). The grip also supplies
+  the affordance that rows can move. Skipped entirely below 2 rows. Deliberately NOT
+  inside `showContextMenu` — the menu stays a generic list and only this caller
+  needs dragging — which is why `showContextMenu` now RETURNS its element.
+- Long lists SCROLL in their own region: items flagged `scroll` share a
+  `.ctx-scroll` box (~10 rows) created on first use, so "Bookmark this search",
+  the separator and the header sit ABOVE it and never scroll away. This forced a
+  fix to the dismiss handler: `document`'s `scroll` listener is on the CAPTURE
+  phase, so it also saw scrolls inside the menu and closed it mid-scroll. It now
+  ignores events whose target is inside `ctxMenuEl`.
+- `showContextMenu` gained four general options: `scroll`, `separator`, `disabled`, and
+  `onRemove`/`removeTitle` (a row-level × , now shared by items and headers via
+  `removeBtn`). The × must `stopPropagation()`: the document-level click listener
+  closes any open menu, which would otherwise kill the refreshed menu that
+  `onRemove` reopens in place.
+- IMPORTANT: `updateSearchClear` now keeps the × VISIBLE when the box is empty
+  but bookmarks exist. Otherwise the menu holding them would be unreachable in
+  exactly the case where you want to recall one — the × is hidden on an empty box.
+- Applying a bookmark goes through `applySearchQuery` → `refilterFresh()`, not
+  `refilter()`: it replaces the query wholesale rather than editing it, so the
+  previous query's unwrapped days should not carry over (see the v0.11.5 rule).
+- Storage is `bd-search-bookmarks` in localStorage, beside the other `bd-*` VIEW
+  preferences — a per-device convenience, deliberately not in IndexedDB and not
+  in the export. Reads are defensive (corrupt/absent → empty list).
+
 ## Search query language (v0.11.0)
 
 The timeline search box is now a query language, not a substring match — the

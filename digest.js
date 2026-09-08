@@ -1661,31 +1661,96 @@ function showContextMenu(x, y, items) {
   hideContextMenu();
   const menu = document.createElement('div');
   menu.className = 'ctx-menu';
+  // Items flagged `scroll` share one scrolling box, created on first use, so a
+  // long list gets its own scrollbar while the entries above it stay put.
+  let scrollBox = null;
+  const target = (it) => {
+    if (!it.scroll) return menu;
+    if (!scrollBox) {
+      scrollBox = document.createElement('div');
+      scrollBox.className = 'ctx-scroll';
+      menu.appendChild(scrollBox);
+    }
+    return scrollBox;
+  };
   for (const it of items) {
+    if (it.separator) {
+      target(it).appendChild(document.createElement('hr')).className = 'ctx-sep';
+      continue;
+    }
     if (it.header) {
       const h = document.createElement('div');
       h.className = 'ctx-header';
       h.textContent = it.label;
-      menu.appendChild(h);
+      if (!it.onRemove) {
+        target(it).appendChild(h);
+        continue;
+      }
+      const hrow = document.createElement('div');
+      hrow.className = 'ctx-row ctx-header-row';
+      hrow.append(h, removeBtn(it.onRemove, it.removeTitle));
+      target(it).appendChild(hrow);
       continue;
     }
     const b = document.createElement('button');
     b.className = 'ctx-item';
     b.textContent = it.label;
-    b.addEventListener('click', async () => {
-      hideContextMenu();
-      await it.onClick();
-    });
-    menu.appendChild(b);
+    if (it.title) b.title = it.title;
+    if (it.current) b.classList.add('is-current');
+    // A disabled item still SHOWS (greyed) so the menu's shape stays constant
+    // and the reason the action is unavailable is visible.
+    if (it.disabled) b.disabled = true;
+    else
+      b.addEventListener('click', async () => {
+        hideContextMenu();
+        await it.onClick();
+      });
+    if (!it.onRemove) {
+      target(it).appendChild(b);
+      continue;
+    }
+    // An item that can delete itself (bookmarked searches).
+    const row = document.createElement('div');
+    row.className = 'ctx-row';
+    row.append(b, removeBtn(it.onRemove, it.removeTitle));
+    target(it).appendChild(row);
   }
-  menu.style.left = `${x}px`;
-  menu.style.top = `${y}px`;
   document.body.appendChild(menu);
   ctxMenuEl = menu;
-  // Keep it on screen
+  clampMenu(menu, x, y);
+  return menu;
+}
+
+/**
+ * Place an already-appended menu at (x, y), flipping it back inside the viewport
+ * if it would overflow. Re-runnable: a caller that adds content afterwards (the
+ * bookmark drag handles) must call it again, or the clamp is computed from a
+ * stale width.
+ */
+function clampMenu(menu, x, y) {
+  menu.style.left = `${x}px`;
+  menu.style.top = `${y}px`;
   const rect = menu.getBoundingClientRect();
   if (rect.right > window.innerWidth) menu.style.left = `${x - rect.width}px`;
   if (rect.bottom > window.innerHeight) menu.style.top = `${y - rect.height}px`;
+}
+
+/**
+ * The × on a self-deleting menu row. It must STOP PROPAGATION: the document-level
+ * click listener closes any open menu, which would otherwise kill the refreshed
+ * menu that onRemove puts back in its place.
+ */
+function removeBtn(onRemove, title = 'Remove') {
+  const rm = document.createElement('button');
+  rm.className = 'ctx-remove';
+  rm.type = 'button';
+  rm.textContent = '×';
+  rm.title = title;
+  rm.addEventListener('click', async (ev) => {
+    ev.stopPropagation();
+    await onRemove();
+  });
+  return rm;
 }
 
 function hideContextMenu() {
@@ -1696,7 +1761,16 @@ function hideContextMenu() {
 }
 
 document.addEventListener('click', hideContextMenu);
-document.addEventListener('scroll', hideContextMenu, true);
+document.addEventListener(
+  'scroll',
+  (e) => {
+    // Capture phase, so this also sees scrolls inside the menu itself — and the
+    // bookmark list scrolls. Only a scroll OUTSIDE the menu should dismiss it.
+    if (ctxMenuEl && e.target instanceof Node && ctxMenuEl.contains(e.target)) return;
+    hideContextMenu();
+  },
+  true,
+);
 
 // ---------------------------------------------------------------------------
 // LLM actions
@@ -2120,6 +2194,60 @@ async function syncMenu(x, y) {
   showContextMenu(x, y, items);
 }
 
+/**
+ * Drag-and-drop reordering of the bookmark rows. Kept here rather than inside
+ * showContextMenu: the menu stays a generic list, and only this caller needs it.
+ * The rows in DOM order are exactly `list` in order, so a row's position IS its
+ * index. Dropping onto row `to` moves the dragged entry to that slot.
+ */
+function enableBookmarkReorder(menu, x, y) {
+  const rows = [...menu.querySelectorAll('.ctx-row:not(.ctx-header-row)')];
+  if (rows.length < 2) return; // nothing to reorder; don't add a useless handle
+  let from = -1;
+  rows.forEach((row, i) => {
+    // The drag must start from a dedicated HANDLE, not the row: a row is covered
+    // edge to edge by two <button>s, and Chrome consumes mousedown on a button
+    // for activation instead of starting the draggable ancestor's drag — which
+    // is why setting draggable on the row alone did nothing. A span has no such
+    // behaviour, and the grip doubles as the affordance saying rows can move.
+    const handle = document.createElement('span');
+    handle.className = 'ctx-handle';
+    handle.textContent = '⠿';
+    handle.title = 'Drag to reorder';
+    handle.draggable = true;
+    row.prepend(handle);
+
+    handle.addEventListener('dragstart', (e) => {
+      from = i;
+      row.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('text/plain', String(i)); // Firefox needs some payload
+    });
+    handle.addEventListener('dragend', () => {
+      row.classList.remove('dragging');
+      for (const r of rows) r.classList.remove('drop-target');
+    });
+    row.addEventListener('dragover', (e) => {
+      if (from < 0 || from === i) return;
+      e.preventDefault(); // without this the drop never fires
+      e.dataTransfer.dropEffect = 'move';
+      row.classList.add('drop-target');
+    });
+    row.addEventListener('dragleave', () => row.classList.remove('drop-target'));
+    row.addEventListener('drop', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (from < 0 || from === i) return;
+      const next = loadSearchBookmarks();
+      const [moved] = next.splice(from, 1);
+      next.splice(i, 0, moved);
+      saveSearchBookmarks(next);
+      showSearchBookmarks(x, y); // redraw in the new order, menu stays open
+    });
+  });
+  clampMenu(menu, x, y); // the handles just widened every row
+}
+
 // Small popover with a datetime-local input (interpreted in local time, as X does).
 /**
  * Anchored popover with a datetime-local input and one action button, shared by
@@ -2199,10 +2327,116 @@ chrome.storage.onChanged.addListener((changes, area) => {
   }
 });
 
+/* -------------------------------------------------------------------------
+ * Bookmarked searches
+ *
+ * Explicitly curated, NOT an automatic history (a "last 5 searches" version was
+ * built and rolled back — it accumulated noise nobody asked for). ☆ saves the
+ * current query; right-click lists what's saved, each row removable.
+ * Stored in localStorage beside the other `bd-*` view preferences: a per-device
+ * convenience, not digest data, so it deliberately stays out of IndexedDB and
+ * the export.
+ * ---------------------------------------------------------------------------- */
+const SEARCH_BOOKMARKS_KEY = 'bd-search-bookmarks';
+
+function loadSearchBookmarks() {
+  try {
+    const v = JSON.parse(localStorage.getItem(SEARCH_BOOKMARKS_KEY));
+    return Array.isArray(v) ? v.filter((q) => typeof q === 'string' && q.trim()) : [];
+  } catch {
+    return []; // corrupt/absent value: start empty rather than break the page
+  }
+}
+function saveSearchBookmarks(list) {
+  localStorage.setItem(SEARCH_BOOKMARKS_KEY, JSON.stringify(list));
+}
+
+/** Replace the query wholesale (applying a bookmark), then re-render. */
+function applySearchQuery(q) {
+  searchEl.value = q;
+  localStorage.setItem('bd-search', q);
+  updateSearchClear();
+  // A wholesale jump to a different saved query, not an incremental edit — the
+  // previous query's unwrapped days belong to it, so start fresh.
+  refilterFresh();
+}
+
+function showSearchBookmarks(x, y) {
+  const q = searchEl.value.trim();
+  const list = loadSearchBookmarks();
+  const saved = !!q && list.includes(q);
+  // `queryPredicate` is null when the query doesn't parse (unbalanced parens, a
+  // stray operator). The box still falls back to a substring match so it never
+  // breaks while typing, but a half-typed query is not worth saving.
+  const invalid = !!q && !queryPredicate(q);
+  let label = '☆ Bookmark this search';
+  if (saved) label = '★ Already bookmarked';
+  else if (invalid) label = '☆ Invalid query — cannot bookmark';
+  const items = [
+    {
+      // Always present, greyed when there is nothing to save (empty or invalid
+      // query) or it is saved already, so the menu never changes shape between
+      // openings and the reason is on the row itself — a disabled button shows no
+      // tooltip, so the label has to carry it.
+      label,
+      disabled: !q || saved || invalid,
+      onClick: () => {
+        saveSearchBookmarks([q, ...loadSearchBookmarks()]); // newest first
+        updateSearchClear(); // the × now has a reason to stay once the box empties
+      },
+    },
+    { separator: true },
+    {
+      header: true,
+      label: list.length ? 'Bookmarked searches' : 'No bookmarked searches yet',
+      // Clearing every bookmark is destructive and unrecoverable (they live in
+      // localStorage, outside the undo stack), so it confirms.
+      removeTitle: 'Remove all bookmarked searches',
+      onRemove: list.length
+        ? () => {
+            const n = list.length;
+            if (!confirm(`Remove all ${n} bookmarked ${n === 1 ? 'search' : 'searches'}?`)) return;
+            saveSearchBookmarks([]);
+            updateSearchClear();
+            showSearchBookmarks(x, y);
+          }
+        : null,
+    },
+  ];
+  for (const b of list) {
+    items.push({
+      label: b,
+      // Bold, not starred: the ☆/★ on the top item already says whether the
+      // current query is saved, so a second marker would state it twice.
+      current: b === q,
+      title: b, // the row ellipsises a long query
+      scroll: true, // long lists scroll; the actions above stay in view
+      onClick: () => applySearchQuery(b),
+      onRemove: () => {
+        saveSearchBookmarks(loadSearchBookmarks().filter((x2) => x2 !== b));
+        updateSearchClear();
+        showSearchBookmarks(x, y); // reopen so several can be pruned in one go
+      },
+    });
+  }
+  enableBookmarkReorder(showContextMenu(x, y, items), x, y);
+}
+
 const searchClearEl = document.getElementById('search-clear');
 function updateSearchClear() {
-  searchClearEl.hidden = !searchEl.value;
+  // Visible with a query (something to clear) AND when bookmarks exist but the
+  // box is empty — otherwise the right-click menu holding them would be
+  // unreachable in exactly the case where you want to recall one.
+  searchClearEl.hidden = !searchEl.value && !loadSearchBookmarks().length;
+  searchClearEl.title = searchEl.value
+    ? 'Clear search · right-click for bookmarked searches'
+    : 'Right-click for bookmarked searches';
 }
+searchClearEl.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  e.stopPropagation();
+  showSearchBookmarks(e.clientX, e.clientY);
+});
 searchEl.addEventListener('input', () => {
   localStorage.setItem('bd-search', searchEl.value);
   updateSearchClear();
